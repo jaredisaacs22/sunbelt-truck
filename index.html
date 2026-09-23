@@ -77,6 +77,19 @@
   .final{font-size:40px;font-weight:900;color:var(--yellow);margin:2px 0}
   .rank{font-weight:800;font-size:17px}
 
+  /* ---- job/map picker ---- */
+  .card.wide{max-width:600px}
+  .maps{display:flex;gap:12px;margin:10px 0;flex-wrap:wrap}
+  .mapcard{flex:1 1 240px;background:var(--btn);border:2px solid #14171a;border-radius:12px;padding:12px 14px;
+    cursor:pointer;text-align:left;color:var(--ink);font-family:inherit;display:flex;flex-direction:column;gap:6px}
+  .mapcard:hover{background:var(--btnh);border-color:var(--yellow)}
+  .mapcard h3{margin:0;font-size:16px}
+  .mapcard p{margin:0;font-size:12.5px;color:#dfe2e6;line-height:1.35}
+  .badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+    padding:2px 8px;border-radius:20px;align-self:flex-start}
+  .badge.easy{background:#2f8f4a;color:#fff}
+  .badge.hard{background:#c94440;color:#fff}
+
   /* ---- side panel contents ---- */
   #phase{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
   #next{display:none;background:#caa46c;color:#231a0e;border-radius:10px;padding:7px 10px;font-size:14px;line-height:1.3;
@@ -226,8 +239,37 @@ const sfx = {
   vroom() { tone(80, .6, 'sawtooth', .06); tone(120, .5, 'sawtooth', .05, .25); tone(160, .4, 'sawtooth', .04, .5); },
   click() { tone(1400, .03, 'square', .03); },
   ring()  { for (let i = 0; i < 2; i++) { tone(880, .12, 'sine', .04, i * .3); tone(1100, .12, 'sine', .04, i * .3 + .12); } },
+  screech(){ tone(720, .22, 'sawtooth', .05); tone(560, .26, 'sawtooth', .04, .04); },
 };
-$('mute').onclick = () => { muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊'; };
+$('mute').onclick = () => {
+  muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊';
+  if (muted && engineGain) engineGain.gain.setTargetAtTime(0, AC.currentTime, .05);
+};
+let engineOsc = null, engineGain = null;
+function engineStart() {
+  if (engineOsc) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    engineOsc = AC.createOscillator(); engineOsc.type = 'sawtooth';
+    engineGain = AC.createGain(); engineGain.gain.value = 0;
+    engineOsc.connect(engineGain); engineGain.connect(AC.destination);
+    engineOsc.frequency.value = 55; engineOsc.start();
+  } catch (e) { /* audio is optional */ }
+}
+function engineUpdate(v) {
+  if (!engineOsc || !AC) return;
+  const mph = v / 6;
+  try {
+    engineOsc.frequency.setTargetAtTime(55 + mph * 2.4, AC.currentTime, .08);
+    engineGain.gain.setTargetAtTime(muted ? 0 : .03, AC.currentTime, .12);
+  } catch (e) {}
+}
+function engineStop() {
+  if (!engineOsc) return;
+  try { engineGain.gain.setTargetAtTime(0, AC.currentTime, .15); engineOsc.stop(AC.currentTime + .3); } catch (e) {}
+  engineOsc = null; engineGain = null;
+}
 $('fs').onclick = () => {
   const d = document, el = d.documentElement;
   if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
@@ -415,12 +457,13 @@ let S = {};
 let popups = [], particles = [];
 let shake = 0, fade = 0, fadeText = '';
 function newGame(name) {
-  S = { name: name || 'Not anyone from 788', score: 0, log: [], mood: 'happy' };
+  S = { name: name || 'Not anyone from 788', score: 0, log: [], mood: 'happy', map: 'flat' };
   popups = []; particles = [];
   updateHUD();
 }
 function award(pts, msg, mood, who = 'driver') {
   S.score += pts;
+  if (pts < 0) sceneMistakes++;
   S.log.push({ pts, msg });
   popups.push({ text: (pts > 0 ? '+' : '') + pts, color: pts >= 0 ? '#63d17a' : '#ff6b6b', t: 0, n: popups.length });
   if (pts > 0) sfx.good(); else if (pts < 0) { sfx.bad(); shake = Math.max(shake, 8); }
@@ -428,12 +471,15 @@ function award(pts, msg, mood, who = 'driver') {
   updateHUD();
 }
 function updateHUD() { $('score').textContent = S.score + ' pts'; }
+function getBest() { try { return parseInt(localStorage.getItem('rr_best') || '0', 10) || 0; } catch (e) { return 0; } }
+function setBest(v) { try { localStorage.setItem('rr_best', String(v)); } catch (e) {} }
+let sceneMistakes = 0;
 function setPhase(t) { $('phase').textContent = t; }
 
 /* ---------------- controls / input ---------------- */
 const input = { gas: false, brake: false };
 const held = {};
-function clearInput() { input.gas = input.brake = false; for (const k in held) held[k] = false; }
+function clearInput() { input.gas = input.brake = false; for (const k in held) held[k] = false; engineStop(); }
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 function btn(label, fn, cls = '') {
   const b = el('button', 'b ' + cls, label);
@@ -497,7 +543,7 @@ addEventListener('blur', clearInput);
 /* ---------------- scene manager ---------------- */
 let scene = null, sceneId = 0;
 function go(name) {
-  sceneId++; clearInput();
+  sceneId++; clearInput(); engineStop();
   $('overlay').className = ''; $('overlay').innerHTML = '';
   $('clip').className = ''; $('next').className = '';
   clearControls();
@@ -522,19 +568,30 @@ function wheel(c, x, y, rot) {
   c.strokeStyle = '#555'; c.lineWidth = 2.5;
   for (let i = 0; i < 3; i++) { const a = rot + i * Math.PI * 2 / 3; line(c, x, y, x + Math.cos(a) * 9, y + Math.sin(a) * 9); }
 }
-function drawGenerator(c, cx, by) {
-  c.fillStyle = '#2b2b2b'; c.fillRect(cx - 43, by - 6, 86, 6);
-  c.fillStyle = '#d6dadd'; rr(c, cx - 40, by - 52, 80, 47, 4); c.fill();
-  c.strokeStyle = '#555'; c.lineWidth = 2; rr(c, cx - 40, by - 52, 80, 47, 4); c.stroke();
+// long: draws a bigger "long load" generator (with DOT warning flags on each end)
+// used by the angle-job map, and requiring extra winch travel to fully clear the bed
+function drawGenerator(c, cx, by, long) {
+  const hw = long ? 60 : 40, k = hw / 40;
+  c.fillStyle = '#2b2b2b'; c.fillRect(cx - hw - 3, by - 6, hw * 2 + 6, 6);
+  c.fillStyle = '#d6dadd'; rr(c, cx - hw, by - 52, hw * 2, 47, 4); c.fill();
+  c.strokeStyle = '#555'; c.lineWidth = 2; rr(c, cx - hw, by - 52, hw * 2, 47, 4); c.stroke();
   c.strokeStyle = '#7b8288'; c.lineWidth = 2;
-  for (let i = 0; i < 5; i++) line(c, cx - 32 + i * 6, by - 44, cx - 32 + i * 6, by - 16);
-  c.fillStyle = '#1f7a3a'; c.fillRect(cx - 40, by - 30, 80, 6);
-  c.fillStyle = '#222'; c.fillRect(cx + 4, by - 46, 26, 12);
-  c.fillStyle = '#63d17a'; c.fillRect(cx + 7, by - 43, 5, 5);
-  c.fillStyle = '#333'; c.fillRect(cx + 26, by - 62, 6, 11);
-  c.strokeStyle = '#444'; c.lineWidth = 3; c.beginPath(); c.arc(cx - 10, by - 56, 4, Math.PI, 0); c.stroke();
+  for (let i = 0; i < 5; i++) { const gx2 = cx + (-32 + i * 6) * k; line(c, gx2, by - 44, gx2, by - 16); }
+  c.fillStyle = '#1f7a3a'; c.fillRect(cx - hw, by - 30, hw * 2, 6);
+  c.fillStyle = '#222'; c.fillRect(cx + 4 * k, by - 46, 26, 12);
+  c.fillStyle = '#63d17a'; c.fillRect(cx + 7 * k, by - 43, 5, 5);
+  c.fillStyle = '#333'; c.fillRect(cx + 26 * k, by - 62, 6, 11);
+  c.strokeStyle = '#444'; c.lineWidth = 3; c.beginPath(); c.arc(cx - 10 * k, by - 56, 4, Math.PI, 0); c.stroke();
   c.fillStyle = '#111'; c.font = 'bold 9px system-ui,sans-serif'; c.textAlign = 'center';
-  c.fillText('GENERATOR', cx - 4, by - 9);
+  c.fillText(long ? 'LONG GENERATOR' : 'GENERATOR', cx - 4, by - 9);
+  if (long) {
+    c.fillStyle = '#e0453f';
+    c.beginPath(); c.moveTo(cx + hw, by - 50); c.lineTo(cx + hw, by - 61); c.lineTo(cx + hw + 9, by - 55); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(cx - hw, by - 50); c.lineTo(cx - hw, by - 61); c.lineTo(cx - hw - 9, by - 55); c.closePath(); c.fill();
+    c.strokeStyle = '#333'; c.lineWidth = 1.4;
+    line(c, cx + hw, by - 50, cx + hw, by - 61); line(c, cx - hw, by - 50, cx - hw, by - 61);
+    c.fillStyle = '#fff'; c.font = 'bold 7px system-ui,sans-serif'; c.fillText('OVERSIZE LOAD', cx - 4, by - 65);
+  }
 }
 function drawSunburst(c, cx, cy, r) {
   c.save(); c.translate(cx, cy);
@@ -568,12 +625,13 @@ function drawRollback(c, x0, gy, st) {
   for (let i = 1; i < 4; i++) line(c, front - 9, -12 - i * 12, front - 30, -12 - i * 12);
   c.fillStyle = '#2b2b2b'; c.beginPath(); c.arc(front - 18, -20, 7, 0, Math.PI * 2); c.fill();
   if (st.gen === 'bed') {
-    const gx = front - 45 - (st.genPos || 0);
-    drawGenerator(c, gx, -12);
-    if (st.cable !== false) { c.strokeStyle = '#111'; c.lineWidth = 2; line(c, front - 18, -20, gx + 40, -26); }
+    const hw = st.genLong ? 60 : 40;
+    const gx = front - 45 - (st.genPos || 0) + (st.swingX || 0);
+    drawGenerator(c, gx, -12, st.genLong);
+    if (st.cable !== false) { c.strokeStyle = '#111'; c.lineWidth = 2; line(c, front - 18, -20, gx + hw, -26); }
     if (st.chains) {
       c.strokeStyle = '#8c8c8c'; c.lineWidth = 3; c.setLineDash([4, 3]);
-      line(c, gx - 38, -40, gx - 62, -12); line(c, gx + 38, -40, gx + 58, -12);
+      line(c, gx - hw * .95, -40, gx - hw * 1.55, -12); line(c, gx + hw * .95, -40, gx + hw * 1.45, -12);
       c.setLineDash([]);
     }
   }
@@ -637,11 +695,11 @@ function drawRollback(c, x0, gy, st) {
   if (st.gen === 'ground') {
     c.save(); c.translate(st.genX, gy);
     if (st.genTilted) c.rotate(-0.12);
-    drawGenerator(c, 0, 0);
+    drawGenerator(c, 0, 0, st.genLong);
     c.restore();
     if (st.cable !== false) {
       const [wx, wy] = bedToWorld(x0, gy, st, FRONT0 - slide - 18, -20);
-      c.strokeStyle = '#111'; c.lineWidth = 2; line(c, wx, wy, st.genX + 40, gy - 26);
+      c.strokeStyle = '#111'; c.lineWidth = 2; line(c, wx, wy, st.genX + (st.genLong ? 60 : 40), gy - 26);
     }
   }
 }
@@ -745,6 +803,11 @@ function drawBranch(sx) {
   ctx.fillStyle = '#f5d90a'; ctx.fillRect(sx + 190, GROUND - 60, 60, 44); ctx.fillStyle = '#333'; ctx.fillRect(sx + 196, GROUND - 90, 48, 6);
   ctx.strokeStyle = '#333'; ctx.lineWidth = 3; line(ctx, sx + 200, GROUND - 60, sx + 240, GROUND - 86); line(ctx, sx + 240, GROUND - 60, sx + 200, GROUND - 86);
 }
+function drawPole(x, y) {
+  ctx.fillStyle = '#6b4a2b'; ctx.fillRect(x - 5, y - 90, 10, 90);
+  ctx.strokeStyle = '#4a3319'; ctx.lineWidth = 2; line(ctx, x - 18, y - 70, x + 18, y - 70);
+  ctx.fillStyle = '#333'; ctx.fillRect(x - 3, y - 96, 6, 8);
+}
 function drawCone(x, y, s = 1) {
   ctx.fillStyle = '#ff6a00';
   ctx.beginPath(); ctx.moveTo(x - 9 * s, y); ctx.lineTo(x, y - 26 * s); ctx.lineTo(x + 9 * s, y); ctx.fill();
@@ -787,13 +850,31 @@ function drawTriangle(x) {
 function puff(x, y, color, n = 1, spread = 1) {
   for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - .5) * 30 * spread, vy: -20 - Math.random() * 30, life: 1.6, r: 6 + Math.random() * 8, color });
 }
+const CONFETTI_COLORS = ['#f5d90a', '#39a24a', '#e0453f', '#3aa0e0', '#fff'];
+function confetti(n = 40) {
+  for (let i = 0; i < n; i++) particles.push({
+    x: Math.random() * W, y: -20 - Math.random() * 120, vx: (Math.random() - .5) * 70,
+    vy: 20 + Math.random() * 40, grav: 55, spin: (Math.random() - .5) * 12, ang: Math.random() * 7,
+    life: 2.6 + Math.random() * 1.4, r: 5 + Math.random() * 4, color: CONFETTI_COLORS[i % CONFETTI_COLORS.length], sq: true
+  });
+}
 function updateParticles(dt) {
-  particles.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.r += 10 * dt; p.life -= dt; });
-  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    if (p.grav) p.vy += p.grav * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.spin) p.ang += p.spin * dt; else p.r += 10 * dt;
+    p.life -= dt;
+  });
+  particles = particles.filter(p => p.life > 0 && p.y < H + 60);
   popups.forEach(p => p.t += dt); popups = popups.filter(p => p.t < 1.8);
 }
 function drawParticles(camX) {
-  particles.forEach(p => { ctx.globalAlpha = Math.max(0, p.life / 1.6) * .8; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x - camX, p.y, p.r, 0, 7); ctx.fill(); });
+  particles.forEach(p => {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 1.6)) * .9;
+    ctx.fillStyle = p.color;
+    if (p.sq) { ctx.save(); ctx.translate(p.x - camX, p.y); ctx.rotate(p.ang); ctx.fillRect(-p.r, -p.r * .6, p.r * 2, p.r * 1.2); ctx.restore(); }
+    else { ctx.beginPath(); ctx.arc(p.x - camX, p.y, p.r, 0, 7); ctx.fill(); }
+  });
   ctx.globalAlpha = 1;
 }
 function drawPopups() {
@@ -835,14 +916,14 @@ function drawFade() {
 /* ============================================================
    DRIVING (shared by both trips)
    ============================================================ */
-const VMAX = 360;       // px/s  (=60 mph)
+const VMAX = 480;       // px/s  (=80 mph) — bumped up, this game is supposed to be fun
 function honk() {
   sfx.horn();
   const lines = ['HOOOONK! Nobody moved, but I feel better.', 'HONK HONK! That one was for the guy in the Prius.',
     'BEEEP! A cow in a field looked up. Respect.', 'HONK! The horn is the loudest thing on this truck. And me.'];
   say(lines[Math.floor(Math.random() * lines.length)], 'happy');
 }
-function driveControls() { clearControls(); setLayout('drive'); }
+function driveControls() { clearControls(); setLayout('drive'); engineStart(); }
 bindHold($('gasP'), 'gas', null, input);
 bindHold($('brakeP'), 'brake', null, input);
 $('honk').onclick = e => { e.preventDefault(); honk(); };
@@ -850,16 +931,19 @@ function makeWorld(cfg) {
   return Object.assign({ x: 450, v: 0, wheel: 0, mode: 'driving', events: [], hazards: false, triangles: false, sputter: false }, cfg);
 }
 function driveStep(w, dt) {
-  if (w.mode !== 'driving') { w.v = Math.max(0, w.v - 400 * dt); return; }
+  if (w.mode !== 'driving') { w.v = Math.max(0, w.v - 400 * dt); engineStop(); return; }
   const gas = input.gas && !w.sputter, brake = input.brake;
-  if (gas) w.v = Math.min(VMAX, w.v + 150 * dt);
-  if (brake) w.v = Math.max(0, w.v - 420 * dt);
-  if (!gas && !brake) w.v = Math.max(0, w.v - 60 * dt);
+  if (gas) w.v = Math.min(VMAX, w.v + 220 * dt);
+  if (brake) w.v = Math.max(0, w.v - 480 * dt);
+  if (!gas && !brake) w.v = Math.max(0, w.v - 70 * dt);
+  if (brake && w.v > 220 && !w._screeched) { sfx.screech(); w._screeched = true; }
+  else if (!brake || w.v <= 220) w._screeched = false;
   if (w.sputter) {
     w.v = Math.max(0, w.v - 110 * dt);
     if (Math.random() < .5) puff(w.x - 10, GROUND - 90, '#555');
   }
   w.x += w.v * dt; w.wheel += w.v * dt / 20;
+  engineUpdate(w.v);
   w.events.forEach(e => e.update && e.update(w, dt));
 }
 const camOf = w => w.x - W * .62;
@@ -869,10 +953,10 @@ function renderWorld(w, extra = {}) {
   if (w.sites) w.sites.forEach(s => (s.kind === 'jobsite' ? drawJobsite : drawBranch)(s.x - camX));
   drawRoad(camX);
   w.events.forEach(e => e.draw && e.draw(camX, w));
-  if (w.leftGen) drawGenerator(ctx, w.leftGen - camX, GROUND - 16);
+  if (w.leftGen) drawGenerator(ctx, w.leftGen - camX, GROUND - 16, S.map === 'angle');
   if (w.triangles) [360, 420, 480].forEach(d => drawTriangle(w.x - d - camX));
   if (!w.hideTruck) drawRollback(ctx, w.x - 326 - camX, GY, {
-    gen: w.loaded ? 'bed' : 'none', genPos: 0, chains: true, wheel: w.wheel, hazards: w.hazards,
+    gen: w.loaded ? 'bed' : 'none', genPos: 0, genLong: S.map === 'angle', chains: true, wheel: w.wheel, hazards: w.hazards,
     driverInCab: !w.driverOut, beacon: false });
   if (w.rig) drawTowRig(ctx, w.rig.x - camX, GY, { wheel: w.rig.wheel, hazards: true, driverInCab: true });
   if (w.driverOut) drawPerson(ctx, w.x + 40 - camX, GROUND + 50, .5, Object.assign({}, CAST.driver, { mood: S.mood }));
@@ -902,12 +986,12 @@ function stopSign(x) {
     }
   };
 }
-function workZone(x1, x2, limit = 25) {
+function workZone(x1, x2, limit = 35) {
   return {
     pen: false, done: false,
     update(w) {
       w.limit = (w.x > x1 - 150 && w.x < x2) ? limit : 0;
-      if (w.x > x1 && w.x < x2 && Math.round(w.v / 6) > limit + 3 && !this.pen) {
+      if (w.x > x1 && w.x < x2 && Math.round(w.v / 6) > limit + 5 && !this.pen) {
         this.pen = true; award(-10, 'Speeding through a work zone! A flagger just chucked his hard hat at my windshield.', 'shock');
       }
       if (w.x >= x2 && !this.done) {
@@ -972,6 +1056,24 @@ function parkZone(dest, label, onArrive) {
 }
 
 /* ============================================================
+   JOB / MAP SELECT — pick which delivery to run
+   ============================================================ */
+const MAPS = {
+  flat: {
+    id: 'flat', label: 'Flatline Lot', badge: 'easy',
+    blurb: 'A standard generator, straight back-in drop. Good for learning the ropes.',
+    genOff: GEN_OFF, long: false, swing: false, target: 0, tol: 0, tolWide: 0,
+    greet: 'We\'re here. Foreman wants it by the fence. Follow the clipboard and do NOT drop this thing — it costs more than my truck.',
+  },
+  angle: {
+    id: 'angle', label: 'Crooked Creek — Angle Job', badge: 'hard',
+    blurb: 'A stretch generator has to thread a narrow gap on an angle. Work the Swing controls to line it up before it touches down.',
+    genOff: 225, long: true, swing: true, target: 58, tol: 20, tolWide: 50,
+    greet: 'This one\'s a squeeze — long generator, and the drop zone\'s cattywampus to the fence. Use the Swing buttons to walk it in at an angle.',
+  },
+};
+
+/* ============================================================
    SCENES
    ============================================================ */
 const scenes = {};
@@ -987,16 +1089,18 @@ scenes.title = {
         <h1>Rollback Rodeo</h1>
         <p>You're a Sunbelt driver with a rollback, a generator, and a <i>dream</i>.
         Drop the generator at the jobsite, then head back to the branch. What could possibly go wrong?</p>
+        ${getBest() > 0 ? `<p>🏆 Best shift: <b>${getBest()} pts</b></p>` : ''}
         <ul>
           <li><b>Drive:</b> hold the <b>GAS</b> / <b>BRAKE</b> pedals with your thumbs (or ← → keys)</li>
           <li><b>Unload:</b> follow the clipboard. It always shows your next step</li>
           <li>Do it right = <span class="plus">+points</span>. Mess it up = <span class="minus">–points</span>.</li>
+          <li>Pick a job next — a straightforward drop, or a tricky angled one</li>
         </ul>
         <label for="nm">Driver name</label>
         <input id="nm" maxlength="24" value="${(S.name || 'Not anyone from 788').replace(/"/g, '')}">
         <button class="b go big" id="startBtn">Clock In 🕖</button>
       </div>`;
-    $('startBtn').onclick = () => { newGame($('nm').value.trim()); go('drive1'); };
+    $('startBtn').onclick = () => { newGame($('nm').value.trim()); go('mapselect'); };
     $('nm').addEventListener('keydown', e => { if (e.key === 'Enter') $('startBtn').click(); });
     say('Mornin\'. Coffee\'s hot, truck\'s loaded, and my vest is extra yellow today. Let\'s roll.', 'happy');
   },
@@ -1007,6 +1111,38 @@ scenes.title = {
     drawBranch(560);
     drawRollback(ctx, 250, GY, { gen: 'bed', chains: true, wheel: 0, beacon: true });
     drawPerson(ctx, 800, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true }));
+    ctx.restore();
+  }
+};
+
+/* ---------- MAP SELECT ---------- */
+scenes.mapselect = {
+  enter() {
+    setPhase('Pick today\'s job');
+    setLayout('full');
+    const ov = $('overlay'); ov.className = 'show center';
+    const cards = Object.values(MAPS).map(m => `
+      <button class="mapcard" data-map="${m.id}">
+        <span class="badge ${m.badge}">${m.badge}</span>
+        <h3>${m.label}</h3>
+        <p>${m.blurb}</p>
+      </button>`).join('');
+    ov.innerHTML = `
+      <div class="card wide">
+        <h2>Pick Today's Job, ${S.name.replace(/</g, '&lt;')}</h2>
+        <p>Dispatch has two tickets on the board this morning.</p>
+        <div class="maps">${cards}</div>
+      </div>`;
+    ov.querySelectorAll('.mapcard').forEach(b => b.onclick = () => { sfx.click(); S.map = b.dataset.map; go('drive1'); });
+    say('Two tickets on the board. Your call, boss.', 'happy');
+  },
+  update() {},
+  render() {
+    drawSky(); drawBackdrop(time * 30); drawRoad(time * 30);
+    ctx.save(); ctx.translate(OX() + 60, 0);
+    drawBranch(560);
+    drawRollback(ctx, 250, GY, { gen: 'bed', chains: true, wheel: 0, beacon: true });
+    drawPerson(ctx, 800, GROUND + 50, .62, Object.assign({}, CAST.dispatch, { wave: true }));
     ctx.restore();
   }
 };
@@ -1023,12 +1159,13 @@ scenes.drive1 = {
       hintAt(700, 'Stop sign up ahead. Hold BRAKE to stop before the white line.'),
       stopSign(1250),
       hintAt(1600, 'Road work ahead — speed limit 25. Easy on the gas, big fella.'),
-      workZone(2100, 3000),
+      workZone(2100, 3000, 35),
       hintAt(3450, 'There\'s the jobsite! Stop with the front bumper in the green box.'),
       parkZone(dest, 'jobsite', () => go('unload')),
     ];
     driveControls();
-    say('Generator\'s chained down. Hold the green GAS pedal to go, red BRAKE to stop. Let\'s make some money.');
+    say((S.map === 'angle' ? 'Long generator\'s chained down and sticking out the back a bit. ' : 'Generator\'s chained down. ')
+      + 'Hold the green GAS pedal to go, red BRAKE to stop. Let\'s make some money.');
   },
   update(dt) { driveStep(this.w, dt); },
   render() {
@@ -1042,8 +1179,10 @@ const X0 = 360;   // truck position in unload scene
 scenes.unload = {
   enter() {
     setPhase('Part 2 of 3 · Unload the generator with the rollback');
+    this.map = MAPS[S.map] || MAPS.flat;
     this.u = { brake: false, chocks: false, pto: false, chains: true, tilt: 0, slide: 0, gen: 'bed', genPos: 0,
-               genX: 0, genTilted: false, cable: true, ws: 0, fastT: 0, cool: 0, winchFast: false, beepT: 0, signed: false };
+               genX: 0, genTilted: false, cable: true, ws: 0, fastT: 0, cool: 0, winchFast: false, beepT: 0, signed: false,
+               swingX: 0 };
     const u = this.u;
     this.steps = [
       { id: 'brake', label: 'Set the parking brake', pts: 10, chk: () => u.brake, msg: 'Parking brake set. Safety first, snacks second.' },
@@ -1061,9 +1200,10 @@ scenes.unload = {
       { id: 'leave', label: 'Pull chocks + release brake, then head out', pts: 0, chk: () => false },
     ];
     this.done = {}; this.hintKey = null;
+    sceneMistakes = 0;
     $('clip').className = 'show'; $('next').className = 'show';
     this.renderControls();
-    say('We\'re here. Foreman wants it by the fence. Follow the clipboard and do NOT drop this thing — it costs more than my truck.');
+    say(this.map.greet);
     later(4500, () => say('You\'re late. Put it by the fence. And don\'t scratch my porta-john.', 'mad', 'foreman'));
   },
   renderControls() {
@@ -1115,6 +1255,15 @@ scenes.unload = {
           if (!hyd()) return false;
           if (u.gen === 'ground' && u.cable) { award(-5, 'Whoa, I almost pulled the generator back on! Unhook the cable instead.', 'shock'); return false; }
         }), 'winchIn')),
+      this.map.swing ? group('Swing · line up the angle',
+        tag(holdBtn('◀ Swing', 'swingL', () => {
+          if (u.gen !== 'bed') { say('Nothing left to swing, bud — it\'s already down.', 'happy'); return false; }
+          if (u.chains) { say('Can\'t swing it yet — it\'s still chained down.', 'mad'); return false; }
+        }), 'swingL'),
+        tag(holdBtn('Swing ▶', 'swingR', () => {
+          if (u.gen !== 'bed') { say('Nothing left to swing, bud — it\'s already down.', 'happy'); return false; }
+          if (u.chains) { say('Can\'t swing it yet — it\'s still chained down.', 'mad'); return false; }
+        }), 'swingR')) : null,
       group('Paperwork',
         tag(btn('✍️ Get signature', () => self.sign(), u.signed ? 'on' : ''), 'sign'),
         tag(btn('🚚 Head out', () => self.leave(), 'go'), 'leave')),
@@ -1174,6 +1323,7 @@ scenes.unload = {
     if (u.chocks) { clean = false; S.score -= 10; S.log.push({ pts: -10, msg: 'Ran over my own wheel chocks.' }); }
     if (u.brake) { clean = false; S.score -= 10; S.log.push({ pts: -10, msg: 'Drove off with the parking brake on.' }); }
     this.done.leave = true; this.renderClip();
+    if (!clean) sceneMistakes++;
     if (clean) award(10, 'Chocks pulled, brake released. Clean getaway. Back to the branch!');
     else {
       updateHUD(); sfx.bad(); shake = 10;
@@ -1181,6 +1331,7 @@ scenes.unload = {
       say(u.chocks ? '*CRUNCH* ...I ran over my own wheel chocks. They\'re wheel chips now.' + (u.brake ? ' AND the parking brake was on. Smells like money burning.' : '')
                    : 'Smell that? I drove off with the parking brake on. That\'s the smell of money burning.', 'shock');
     }
+    if (sceneMistakes === 0) later(clean ? 200 : 1400, () => award(15, 'Flawless unload! Not one mistake all shift — the foreman\'s already telling people about you.'));
     clearControls();
     later(2600, () => go('drive2'));
   },
@@ -1192,6 +1343,10 @@ scenes.unload = {
     if (held.slideFwd) u.slide = Math.max(0, u.slide - 55 * dt);
     if ((held.slideBack && u.slide < SLIDEMAX) || (held.slideFwd && u.slide > 0)) {
       u.beepT -= dt; if (u.beepT <= 0) { sfx.beep(); u.beepT = .6; }
+    }
+    if (this.map.swing && u.gen === 'bed') {
+      if (held.swingL) u.swingX = clamp(u.swingX - 70 * dt, -100, 100);
+      if (held.swingR) u.swingX = clamp(u.swingX + 70 * dt, -100, 100);
     }
     // winch
     if (held.winchOut && u.gen === 'bed') u.ws = Math.min(130, u.ws + 50 * dt);
@@ -1207,20 +1362,30 @@ scenes.unload = {
           award(-5, 'Easy on the winch, Speed Racer! Tap it — don\'t hold it!', 'shock');
         }
       } else u.fastT = 0;
-      if (u.genPos >= GEN_OFF) {
+      if (u.genPos >= this.map.genOff) {
         const [rx] = bedToWorld(X0, GY, u, FRONT0 - u.slide - BEDLEN, 0);
         u.gen = 'ground'; u.ws = 0; held.winchOut = false;
-        if (u.slide >= SLIDEMAX - .5 && u.tilt >= .99) {
-          u.genX = rx - 44; sfx.thud(); puff(u.genX, GY - 5, '#b8956a', 8, 3);
-          this.done.winch = true;
-          award(u.winchFast ? 10 : 20, u.winchFast ? 'Generator\'s on the ground. A little fast, but nobody died.' : 'Generator\'s on the ground — smooth as butter on a biscuit!');
-          this.renderClip();
+        const dropOk = u.slide >= SLIDEMAX - .5 && u.tilt >= .99;
+        u.genX = (dropOk ? rx - 44 : rx - 60) + u.swingX;
+        let pts, msg, mood;
+        if (dropOk) {
+          pts = u.winchFast ? 10 : 20;
+          msg = u.winchFast ? 'Generator\'s on the ground. A little fast, but nobody died.' : 'Generator\'s on the ground — smooth as butter on a biscuit!';
+          sfx.thud(); puff(u.genX, GY - 5, '#b8956a', 8, 3);
         } else {
-          u.genX = rx - 60; u.genTilted = true; sfx.thud(); shake = 18; puff(u.genX, GY - 5, '#b8956a', 16, 4);
-          this.done.winch = true;
-          award(-25, 'The generator took the express route off the end of the bed! It survived... mostly. The foreman is crying.', 'shock');
-          this.renderClip();
+          u.genTilted = true; pts = -25; mood = 'shock';
+          msg = 'The generator took the express route off the end of the bed! It survived... mostly. The foreman is crying.';
+          sfx.thud(); shake = 18; puff(u.genX, GY - 5, '#b8956a', 16, 4);
         }
+        if (this.map.swing) {
+          const off = Math.abs(u.swingX - this.map.target);
+          if (off <= this.map.tol) { pts += 25; msg += ' And you threaded the angle dead center — textbook!'; }
+          else if (off <= this.map.tolWide) { pts += 5; msg += ' A little crooked lining up the angle, but it counts.'; }
+          else { pts -= 20; u.genTilted = true; mood = 'shock'; msg += ' Clipped the fence post lining up that angle. Oof.'; shake = Math.max(shake, 14); }
+        }
+        this.done.winch = true;
+        award(pts, msg, mood);
+        this.renderClip();
         this.renderControls();
       }
     }
@@ -1235,7 +1400,17 @@ scenes.unload = {
     drawJobsite(470);
     ctx.fillStyle = '#a8864f'; ctx.fillRect(-OX(), GROUND + 2, W, H);
     for (let i = 0; i < 40; i++) { ctx.fillStyle = '#967545'; ctx.fillRect((i * 97) % W - OX(), GROUND + 20 + (i * 37) % 70, 14, 4); }
-    drawRollback(ctx, X0, GY, Object.assign({}, u, { beacon: u.pto, wheel: 0 }));
+    if (this.map.swing) {
+      const [tgtX] = bedToWorld(X0, GY, { tilt: 1, slide: SLIDEMAX }, FRONT0 - SLIDEMAX - BEDLEN, 0);
+      this.dropCenterX = tgtX - 44 + this.map.target;
+      ctx.save(); ctx.translate(this.dropCenterX, GY); ctx.rotate(-0.22);
+      ctx.strokeStyle = '#46e06a'; ctx.lineWidth = 3; ctx.setLineDash([8, 5]); ctx.strokeRect(-55, -6, 110, 50); ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(70,224,106,.15)'; ctx.fillRect(-55, -6, 110, 50);
+      ctx.restore();
+      drawPole(this.dropCenterX + this.map.tolWide + 26, GY);
+      drawPole(this.dropCenterX - this.map.tolWide - 26, GY);
+    }
+    drawRollback(ctx, X0, GY, Object.assign({}, u, { beacon: u.pto, wheel: 0, genLong: this.map.long }));
     if (u.chocks) { ctx.fillStyle = '#f5d90a'; [X0 + 44, X0 + 250].forEach(x => { ctx.beginPath(); ctx.moveTo(x, GY); ctx.lineTo(x + 12, GY - 12); ctx.lineTo(x + 12, GY); ctx.fill(); }); }
     drawPerson(ctx, 770, GROUND + 50, .6, Object.assign({}, CAST.driver, { mood: S.mood }));
     drawPerson(ctx, 890, GROUND + 40, .55, Object.assign({}, CAST.foreman, { mood: this.u.genTilted ? 'shock' : 'happy', flip: true }));
@@ -1250,6 +1425,19 @@ scenes.unload = {
       ctx.fillStyle = '#3c9d4f'; ctx.fillRect(gx + 20, gy + 42, gw * 85 / 130, 22);
       ctx.fillStyle = '#c94440'; ctx.fillRect(gx + 20 + gw * 85 / 130, gy + 42, gw * 45 / 130, 22);
       ctx.fillStyle = '#fff'; ctx.fillRect(gx + 20 + gw * u.ws / 130 - 3, gy + 36, 6, 34);
+    }
+    // swing gauge — shows how close the generator is to the angled drop zone
+    if (this.map.swing && u.gen === 'bed' && !u.chains) {
+      const gx = 180, gy = 240, gw = 370, lo = -100, hi = 100;
+      const px = v => gx + 20 + gw * (clamp(v, lo, hi) - lo) / (hi - lo);
+      ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, gx, gy, gw + 40, 78, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('SWING · line up the angled drop zone', gx + 20, gy + 30);
+      ctx.fillStyle = '#c94440'; ctx.fillRect(gx + 20, gy + 42, gw, 22);
+      const t = this.map.target;
+      ctx.fillStyle = '#e0a53a'; ctx.fillRect(px(t - this.map.tolWide), gy + 42, px(t + this.map.tolWide) - px(t - this.map.tolWide), 22);
+      ctx.fillStyle = '#3c9d4f'; ctx.fillRect(px(t - this.map.tol), gy + 42, px(t + this.map.tol) - px(t - this.map.tol), 22);
+      ctx.fillStyle = '#fff'; ctx.fillRect(px(u.swingX) - 3, gy + 36, 6, 34);
     }
     ctx.restore();
   }
@@ -1471,6 +1659,8 @@ scenes.end = {
     setPhase('Shift complete!');
     setLayout('full');
     const [r, sub] = rank(S.score);
+    const best = getBest(), isNew = S.score > best;
+    if (isNew) setBest(S.score);
     const log = S.log.filter(l => l.pts !== 0).map(l =>
       `<li><span class="p ${l.pts > 0 ? 'plus' : 'minus'}">${l.pts > 0 ? '+' : ''}${l.pts}</span><span>${l.msg.replace(/</g, '&lt;')}</span></li>`).join('');
     const ov = $('overlay'); ov.className = 'show center';
@@ -1479,6 +1669,7 @@ scenes.end = {
         <h2>Shift Complete, ${S.name.replace(/</g, '&lt;')}!</h2>
         <div class="final">${S.score} pts</div>
         <div class="rank">${r}</div>
+        ${isNew ? '<p style="color:#f5d90a;font-weight:800">🏆 New personal best!</p>' : `<p style="color:var(--muted)">Best shift: ${Math.max(best, S.score)} pts</p>`}
         <p>${sub}</p>
         <ul class="log">${log}</ul>
         <button class="b go big" id="again">Clock In Again 🔁</button>
@@ -1487,6 +1678,7 @@ scenes.end = {
     say(S.score >= 150 ? 'Another day, another generator. Clocking out — tacos are calling my name.' :
         'Well... we survived. Mostly. Clocking out before anything else breaks.', S.score >= 80 ? 'happy' : 'mad');
     fade = 0; fadeText = '';
+    if (S.score >= 220) { confetti(50); later(900, () => confetti(30)); }
   },
   update() {},
   render() {
@@ -1496,6 +1688,7 @@ scenes.end = {
     drawRollback(ctx, 60, GY, { gen: 'none', wheel: 0 });
     drawPerson(ctx, 480, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true, mood: S.score >= 80 ? 'happy' : 'shock' }));
     ctx.restore();
+    drawParticles(0);
   }
 };
 
@@ -1524,7 +1717,7 @@ resize();
 newGame('Not anyone from 788');
 go('title');
 requestAnimationFrame(frame);
-window.__rr = { get S() { return S; }, get scene() { return scene; }, go, held, input };
+window.__rr = { get S() { return S; }, get scene() { return scene; }, get particles() { return particles; }, go, held, input };
 </script>
 </body>
 </html>
