@@ -415,7 +415,7 @@ let S = {};
 let popups = [], particles = [];
 let shake = 0, fade = 0, fadeText = '';
 function newGame(name) {
-  S = { name: name || 'Big Earl', score: 0, log: [], mood: 'happy' };
+  S = { name: name || 'Not anyone from 788', score: 0, log: [], mood: 'happy' };
   popups = []; particles = [];
   updateHUD();
 }
@@ -993,7 +993,7 @@ scenes.title = {
           <li>Do it right = <span class="plus">+points</span>. Mess it up = <span class="minus">–points</span>.</li>
         </ul>
         <label for="nm">Driver name</label>
-        <input id="nm" maxlength="18" value="${(S.name || 'Big Earl').replace(/"/g, '')}">
+        <input id="nm" maxlength="24" value="${(S.name || 'Not anyone from 788').replace(/"/g, '')}">
         <button class="b go big" id="startBtn">Clock In 🕖</button>
       </div>`;
     $('startBtn').onclick = () => { newGame($('nm').value.trim()); go('drive1'); };
@@ -1521,7 +1521,7 @@ function frame(t) {
 addEventListener('resize', resize);
 if (window.ResizeObserver) new ResizeObserver(resize).observe($('stage'));
 resize();
-newGame('Big Earl');
+newGame('Not anyone from 788');
 go('title');
 requestAnimationFrame(frame);
 window.__rr = { get S() { return S; }, get scene() { return scene; }, go, held, input };
