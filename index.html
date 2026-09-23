@@ -536,11 +536,24 @@ function drawGenerator(c, cx, by) {
   c.fillStyle = '#111'; c.font = 'bold 9px system-ui,sans-serif'; c.textAlign = 'center';
   c.fillText('GENERATOR', cx - 4, by - 9);
 }
+function drawSunburst(c, cx, cy, r) {
+  c.save(); c.translate(cx, cy);
+  c.fillStyle = '#f5d90a';
+  c.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a1 = i * Math.PI / 4, a2 = a1 + Math.PI / 8;
+    c.lineTo(Math.cos(a1) * r * 1.9, Math.sin(a1) * r * 1.9);
+    c.lineTo(Math.cos(a2) * r * .9, Math.sin(a2) * r * .9);
+  }
+  c.closePath(); c.fill();
+  c.fillStyle = '#39a24a'; c.beginPath(); c.arc(0, 0, r * .55, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
 // st: tilt, slide, gen ('bed'|'ground'|'none'), genPos, genX, genTilted, chains, cable,
 //     cabColor, trim, wheel, hazards, beacon, cargo, driverInCab
 function drawRollback(c, x0, gy, st) {
   const th = (st.tilt || 0) * MAXANG, slide = st.slide || 0;
-  const cab = st.cabColor || '#f4f4f0', trim = st.trim || '#1f7a3a';
+  const cab = st.cabColor || '#39a24a', trim = st.trim || '#161616';
   const blink = Math.floor(time * 3) % 2 === 0;
 
   // bed (behind cab)
@@ -595,10 +608,12 @@ function drawRollback(c, x0, gy, st) {
     c.fillStyle = '#1f5f2f'; c.beginPath(); c.arc(x0 + 265, gy - 106, 9.5, Math.PI, 0); c.fill();
     c.fillRect(x0 + 265, gy - 108, 14, 3);
   }
-  c.fillStyle = trim; c.fillRect(x0 + 214, gy - 72, 110, 9);
-  c.fillStyle = '#f5d90a'; c.fillRect(x0 + 214, gy - 62, 110, 4);
-  c.fillStyle = '#1b1b1b'; c.font = 'bold 10px system-ui,sans-serif'; c.textAlign = 'center';
-  c.fillText('SUNBELT', x0 + 245, gy - 44);
+  drawSunburst(c, x0 + 232, gy - 108, 9);
+  c.fillStyle = trim; c.fillRect(x0 + 214, gy - 76, 110, 15);
+  c.fillStyle = '#f5d90a'; c.fillRect(x0 + 214, gy - 61, 110, 3);
+  c.fillStyle = '#fff'; c.font = 'bold 9px system-ui,sans-serif'; c.textAlign = 'center';
+  c.fillText('SUNBELT', x0 + 249, gy - 68);
+  c.font = 'bold 6px system-ui,sans-serif'; c.fillText('RENTALS', x0 + 249, gy - 61);
   c.strokeStyle = 'rgba(0,0,0,.25)'; c.lineWidth = 1.5; rr(c, x0 + 218, gy - 124, 50, 84, 5); c.stroke();
   c.fillStyle = '#777'; c.fillRect(x0 + 320, gy - 90, 6, 40);
   c.fillStyle = '#ddd'; c.fillRect(x0 + 312, gy - 52, 18, 12);
