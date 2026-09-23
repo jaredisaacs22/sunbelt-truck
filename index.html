@@ -2,109 +2,176 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111417">
 <title>Rollback Rodeo</title>
 <style>
   :root{
-    --bg:#1b1f23; --panel:#262b31; --ink:#f3f1ea; --muted:#aab0b8;
+    --bg:#111417; --panel:#22272d; --ink:#f3f1ea; --muted:#aab0b8;
     --yellow:#f5d90a; --green:#1f7a3a; --red:#c94440; --btn:#353c44; --btnh:#434b55;
+    --pedal:clamp(72px, 25vh, 124px);
   }
-  *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--ink);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-  #app{max-width:992px;margin:0 auto;padding:10px 16px 28px}
-  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
-  .brand{font-weight:900;letter-spacing:.5px;font-size:20px;color:var(--yellow)}
-  #phase{flex:1;color:var(--muted);font-size:14px;min-width:120px}
-  #score{font-weight:800;font-size:20px;background:#000;padding:4px 12px;border-radius:8px;
-    border:2px solid var(--yellow);font-variant-numeric:tabular-nums}
-  #mute{background:var(--btn);border:0;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px}
-  #stage{position:relative;width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;
-    background:#87c6e8;box-shadow:0 6px 24px rgba(0,0,0,.4)}
-  canvas#game{width:100%;height:100%;display:block}
-  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:flex-start;
-    background:linear-gradient(90deg,rgba(10,12,14,.8),rgba(10,12,14,.15));padding:16px}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);overscroll-behavior:none;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:100%}
+  input{-webkit-user-select:text;user-select:text}
+
+  /* ---- layout: game on the left, control panel on the right (landscape first) ---- */
+  #app{position:fixed;inset:0;display:flex;flex-direction:row;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  #stage{position:relative;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:#87c6e8}
+  canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #side{flex:0 0 clamp(230px, 36vw, 380px);display:flex;flex-direction:column;gap:8px;padding:8px;
+    background:var(--panel);overflow-y:auto;-webkit-overflow-scrolling:touch;border-left:3px solid #000}
+  body.full #side, body.drive #side{display:none}
+
+  /* ---- floating top bar: dialog + score ---- */
+  #topbar{position:absolute;top:6px;left:6px;right:6px;display:flex;gap:6px;align-items:flex-start;pointer-events:none;z-index:2}
+  #dialog{flex:1;display:flex;gap:8px;align-items:center;background:rgba(20,24,28,.86);border-radius:12px;
+    padding:5px 10px 5px 5px;border-left:5px solid var(--yellow);min-width:0}
+  #portrait{width:46px;height:46px;border-radius:50%;flex:none;border:2px solid #000;background:#9fd3ef}
+  #speaker{font-weight:800;color:var(--yellow);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  #text{font-size:clamp(12px, 1.25vw + 6px, 16px);line-height:1.3}
+  #hud{display:flex;flex-direction:column;gap:4px;align-items:flex-end;pointer-events:auto}
+  #score{font-weight:900;font-size:clamp(14px, 1.2vw + 8px, 20px);background:#000;padding:3px 10px;border-radius:8px;
+    border:2px solid var(--yellow);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mini{display:flex;gap:4px}
+  .mini button{background:rgba(20,24,28,.86);border:0;color:var(--ink);border-radius:8px;width:36px;height:32px;font-size:16px;cursor:pointer}
+
+  /* ---- driving pedals (thumb zones) ---- */
+  #pedals{position:absolute;left:10px;right:10px;bottom:10px;display:none;justify-content:space-between;align-items:flex-end;
+    pointer-events:none;z-index:2}
+  body.drive #pedals{display:flex}
+  #pedals .side{display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:auto}
+  .pedal{width:var(--pedal);height:var(--pedal);border-radius:50%;border:4px solid rgba(0,0,0,.55);font-weight:900;
+    font-size:calc(var(--pedal) * .19);color:#111;cursor:pointer;touch-action:none;box-shadow:0 5px 0 rgba(0,0,0,.45);
+    font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+  .pedal small{font-size:.55em;opacity:.7;margin-top:2px}
+  .pedal.gas{background:rgba(99,209,122,.92)}
+  .pedal.brk{background:rgba(214,69,65,.92);color:#fff}
+  .pedal.held{transform:translateY(4px);box-shadow:0 1px 0 rgba(0,0,0,.45);filter:brightness(1.15)}
+  #honk{background:rgba(20,24,28,.86);color:#fff;border:0;border-radius:20px;padding:8px 14px;font-size:14px;font-weight:700;font-family:inherit}
+
+  /* ---- overlays (title / end cards) ---- */
+  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:flex-start;z-index:3;
+    background:linear-gradient(90deg,rgba(10,12,14,.82),rgba(10,12,14,.1));padding:12px}
   #overlay.show{display:flex}
   #overlay.center{justify-content:center;background:rgba(10,12,14,.6)}
-  .card{background:var(--panel);border-radius:14px;padding:16px 20px;max-width:440px;width:100%;
+  .card{background:var(--panel);border-radius:14px;padding:14px 18px;max-width:430px;width:100%;
     max-height:100%;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.5);border-top:6px solid var(--yellow)}
-  .card h1{margin:0 0 4px;font-size:28px;color:var(--yellow);line-height:1.1}
-  .card h2{margin:0 0 8px;font-size:22px}
-  .card p{margin:6px 0;line-height:1.4;font-size:15px}
-  .card ul{margin:6px 0 10px;padding-left:18px;font-size:14px;line-height:1.45;color:#dfe2e6}
-  .card label{font-size:13px;color:var(--muted);display:block;margin-top:8px}
+  .card h1{margin:0 0 4px;font-size:26px;color:var(--yellow);line-height:1.1}
+  .card h2{margin:0 0 6px;font-size:20px}
+  .card p{margin:6px 0;line-height:1.35;font-size:14px}
+  .card ul{margin:6px 0 8px;padding-left:18px;font-size:13px;line-height:1.4;color:#dfe2e6}
+  .card label{font-size:12px;color:var(--muted);display:block;margin-top:6px}
   .card input{width:100%;font-size:16px;padding:8px 10px;border-radius:8px;border:2px solid #444;
-    background:#111;color:var(--ink);margin:4px 0 12px}
+    background:#111;color:var(--ink);margin:4px 0 10px}
   .log{list-style:none;padding:0 !important;margin:8px 0 12px !important}
   .log li{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #333;font-size:13px}
   .log .p{font-weight:800;min-width:38px;text-align:right;font-variant-numeric:tabular-nums}
   .plus{color:#63d17a}.minus{color:#ff6b6b}
-  .final{font-size:44px;font-weight:900;color:var(--yellow);margin:4px 0}
-  .rank{font-weight:800;font-size:18px}
-  #dialog{display:flex;gap:12px;align-items:center;background:var(--panel);border-radius:12px;
-    padding:8px 12px;margin-top:10px;min-height:88px;border-left:6px solid var(--yellow)}
-  #portrait{width:76px;height:76px;border-radius:50%;background:#9fd3ef;flex:none;border:3px solid #111}
-  #speaker{font-weight:800;color:var(--yellow);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
-  #text{font-size:16px;line-height:1.35}
-  #bottom{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:flex-start}
-  #controls{flex:1 1 520px;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start}
-  .group{background:var(--panel);border-radius:10px;padding:8px 10px}
-  .group h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
-  .row{display:flex;gap:6px;flex-wrap:wrap}
-  button.b{background:var(--btn);color:var(--ink);border:0;border-bottom:3px solid #14171a;border-radius:8px;
-    padding:10px 12px;font-size:15px;font-weight:700;cursor:pointer;user-select:none;-webkit-user-select:none;
-    touch-action:none;-webkit-touch-callout:none;min-height:44px;font-family:inherit}
+  .final{font-size:40px;font-weight:900;color:var(--yellow);margin:2px 0}
+  .rank{font-weight:800;font-size:17px}
+
+  /* ---- side panel contents ---- */
+  #phase{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  #next{display:none;background:#caa46c;color:#231a0e;border-radius:10px;padding:7px 10px;font-size:14px;line-height:1.3;
+    border-top:8px solid #6b6b6b}
+  #next.show{display:block}
+  #next b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;opacity:.75}
+  #controls{display:flex;flex-direction:column;gap:6px}
+  .group h4{margin:0 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px}
+  .row:has(> :nth-child(3):last-child){grid-template-columns:repeat(3,1fr)}
+  .row:has(> :nth-child(4):last-child){grid-template-columns:1fr 1fr}
+  button.b small{display:block;font-size:11px;opacity:.8;margin-top:1px}
+  button.b.hint{box-shadow:0 0 0 3px var(--yellow);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 5px rgba(245,217,10,.35)}}
+  button.b{background:var(--btn);color:var(--ink);border:0;border-bottom:3px solid #14171a;border-radius:9px;
+    padding:8px 8px;font-size:14px;font-weight:700;cursor:pointer;min-height:46px;font-family:inherit;line-height:1.15}
+  button.b.hold{touch-action:none;-webkit-touch-callout:none}
   button.b:hover{background:var(--btnh)}
   button.b:active,button.b.held{transform:translateY(2px);border-bottom-width:1px}
   button.b.on{background:var(--green)}
   button.b.go{background:var(--yellow);color:#111}
-  button.b.go:hover{background:#ffe53a}
   button.b.warn{background:var(--red)}
   button.b:disabled{opacity:.35;cursor:not-allowed}
-  button.big{font-size:20px;padding:14px 24px;width:100%}
-  button.pedal{font-size:20px;padding:18px 28px;min-width:130px}
-  .hint{font-size:12px;color:var(--muted);margin-top:4px}
-  #clip{flex:0 1 290px;background:#caa46c;color:#231a0e;border-radius:10px;padding:10px 12px 8px;display:none;
-    border-top:14px solid #6b6b6b;box-shadow:inset 0 0 0 3px #b08a55}
+  button.big{font-size:19px;padding:12px 20px;width:100%}
+  #clip{display:none;background:#caa46c;color:#231a0e;border-radius:10px;padding:6px 10px}
   #clip.show{display:block}
-  #clip h3{margin:0 0 4px;font-size:15px}
-  #clip ol{margin:0;padding-left:20px;font-size:13.5px;line-height:1.45}
+  #clip summary{font-weight:800;font-size:13px;cursor:pointer}
+  #clip ol{margin:6px 0 2px;padding-left:20px;font-size:12.5px;line-height:1.4}
   #clip li.done{text-decoration:line-through;opacity:.55}
   #clip li.next{font-weight:800;background:rgba(255,255,255,.35);border-radius:4px}
   #clip li.bonus{font-style:italic}
-  @media (max-width:560px){
-    #text{font-size:14px} .card h1{font-size:22px} .card{padding:12px 14px}
-    #overlay{background:rgba(10,12,14,.6);justify-content:center}
-    button.pedal{min-width:0;flex:1}
+
+  /* ---- rotate prompt (phones held upright) ---- */
+  #rotate{display:none;position:fixed;inset:0;z-index:10;background:#111417;color:var(--ink);
+    flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:14px}
+  #rotate .ph{font-size:64px;animation:turn 1.6s ease-in-out infinite}
+  @keyframes turn{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(90deg)}}
+  #rotate h2{margin:0;color:var(--yellow)}
+  #rotate p{margin:0;color:var(--muted);max-width:280px}
+  @media (orientation:portrait) and (pointer:coarse){
+    body:not(.portrait-ok) #rotate{display:flex}
+  }
+  /* portrait fallback: stack game over controls */
+  @media (orientation:portrait){
+    #app{flex-direction:column}
+    #stage{flex:0 0 auto;aspect-ratio:16/10;width:100%}
+    body.drive #stage, body.full #stage{flex:1 1 auto;aspect-ratio:auto}
+    #side{flex:1 1 auto;border-left:0;border-top:3px solid #000}
+    :root{--pedal:clamp(72px, 24vw, 120px)}
+  }
+  @media (max-height:430px){
+    .card h1{font-size:21px} .card p{font-size:13px} .card ul{font-size:12px;margin:4px 0} .card{padding:10px 14px}
+    .card input{padding:6px 8px;margin:2px 0 8px} button.big{padding:9px 16px;font-size:17px}
+    #portrait{width:40px;height:40px}
   }
 </style>
 </head>
-<body>
+<body class="full">
 <div id="app">
-  <header>
-    <div class="brand">🚚 ROLLBACK RODEO</div>
-    <div id="phase">Clock in to start your shift</div>
-    <div id="score">0 pts</div>
-    <button id="mute" title="Sound on/off">🔊</button>
-  </header>
-
   <div id="stage">
-    <canvas id="game" width="960" height="540"></canvas>
+    <canvas id="game"></canvas>
+    <div id="topbar">
+      <div id="dialog">
+        <canvas id="portrait" width="110" height="110"></canvas>
+        <div>
+          <div id="speaker">Driver</div>
+          <div id="text">Ready when you are, boss.</div>
+        </div>
+      </div>
+      <div id="hud">
+        <div id="score">0 pts</div>
+        <div class="mini">
+          <button id="fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+          <button id="mute" title="Sound on/off" aria-label="Sound on/off">🔊</button>
+        </div>
+      </div>
+    </div>
+    <div id="pedals">
+      <div class="side"><button id="honk">📯 Honk</button><button class="pedal brk" id="brakeP">BRAKE<small>◀ / A</small></button></div>
+      <div class="side"><button class="pedal gas" id="gasP">GAS<small>▶ / D</small></button></div>
+    </div>
     <div id="overlay"></div>
   </div>
-
-  <div id="dialog">
-    <canvas id="portrait" width="110" height="110"></canvas>
-    <div>
-      <div id="speaker">Driver</div>
-      <div id="text">Ready when you are, boss.</div>
-    </div>
-  </div>
-
-  <div id="bottom">
+  <div id="side">
+    <div id="phase">Clock in to start your shift</div>
+    <div id="next"></div>
     <div id="controls"></div>
-    <div id="clip"></div>
+    <details id="clip"></details>
   </div>
+</div>
+<div id="rotate">
+  <div class="ph">📱</div>
+  <h2>Turn your phone sideways</h2>
+  <p>Rollback Rodeo plays best in landscape. Big trucks need wide screens.</p>
+  <button class="b" id="portraitOk">Play upright anyway</button>
 </div>
 
 <script>
@@ -116,7 +183,21 @@
 
 const cv = document.getElementById('game');
 const ctx = cv.getContext('2d');
-const W = 960, H = 540, GROUND = 440, GY = GROUND + 5;
+const GROUND = 440, GY = GROUND + 5;
+// Logical canvas size. The scene is authored around 960x540; the canvas grows wider
+// (landscape phones) or taller (narrow panels) to fill its box, never letterboxed.
+let W = 960, H = 540, K = 1;
+function resize() {
+  const r = $('stage').getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const a = r.width / r.height;
+  if (a >= 16 / 9) { H = 540; W = Math.round(540 * a); } else { W = 960; H = Math.round(960 / a); }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  K = cv.width / W;
+}
+// horizontal offset that centers fixed 960-wide scenes
+const OX = () => (W - 960) / 2;
 const $ = id => document.getElementById(id);
 
 /* ---------------- sound ---------------- */
@@ -125,6 +206,7 @@ function tone(f, d, type = 'square', vol = 0.05, when = 0) {
   if (muted) return;
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
     const t = AC.currentTime + when;
     const o = AC.createOscillator(), g = AC.createGain();
     o.type = type; o.frequency.setValueAtTime(f, t);
@@ -146,6 +228,16 @@ const sfx = {
   ring()  { for (let i = 0; i < 2; i++) { tone(880, .12, 'sine', .04, i * .3); tone(1100, .12, 'sine', .04, i * .3 + .12); } },
 };
 $('mute').onclick = () => { muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊'; };
+$('fs').onclick = () => {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) Promise.resolve(req.call(el)).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => {});
+  }
+};
+if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) $('fs').style.display = 'none';
+$('portraitOk').onclick = () => document.body.classList.add('portrait-ok');
 
 /* ---------------- helpers ---------------- */
 function rr(c, x, y, w, h, r) {
@@ -350,7 +442,9 @@ function btn(label, fn, cls = '') {
 }
 // a button you press and hold. `start` may return false to refuse.
 function holdBtn(label, key, start, cls = '', target = held) {
-  const b = el('button', 'b ' + cls, label);
+  return bindHold(el('button', 'b hold ' + cls, label), key, start, target);
+}
+function bindHold(b, key, start, target = held) {
   const down = e => {
     e.preventDefault();
     if (start && start() === false) return;
@@ -366,22 +460,38 @@ function holdBtn(label, key, start, cls = '', target = held) {
   return b;
 }
 function group(title, ...kids) {
-  const g = el('div', 'group'); g.appendChild(el('h4', '', title));
+  const g = el('div', 'group'); if (title) g.appendChild(el('h4', '', title));
   const r = el('div', 'row'); kids.forEach(k => k && r.appendChild(k)); g.appendChild(r);
   return g;
 }
+// layout: 'full' (just the game), 'side' (game + control panel), 'drive' (game + pedals)
+function setLayout(mode) {
+  if (document.body.dataset.mode === mode) return;
+  document.body.dataset.mode = mode;
+  document.body.classList.remove('full', 'side', 'drive');
+  document.body.classList.add(mode);
+  input.gas = input.brake = false;
+  resize();
+}
 function setControls(...groups) {
+  setLayout('side');
   const c = $('controls'); c.innerHTML = '';
   groups.forEach(g => g && c.appendChild(g));
 }
+function clearControls() { $('controls').innerHTML = ''; }
 const KEYS = { ArrowRight: 'gas', KeyD: 'gas', ArrowUp: 'gas', KeyW: 'gas', Space: 'gas',
                ArrowLeft: 'brake', KeyA: 'brake', ArrowDown: 'brake', KeyS: 'brake' };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (KEYS[e.code] && scene && scene.driving && scene.driving()) { input[KEYS[e.code]] = true; e.preventDefault(); }
+  if (KEYS[e.code] && scene && scene.driving && scene.driving()) {
+    input[KEYS[e.code]] = true; e.preventDefault();
+    $(KEYS[e.code] === 'gas' ? 'gasP' : 'brakeP').classList.add('held');
+  }
   if (e.code === 'KeyH' && scene && scene.driving && scene.driving()) honk();
 });
-addEventListener('keyup', e => { if (KEYS[e.code]) input[KEYS[e.code]] = false; });
+addEventListener('keyup', e => {
+  if (KEYS[e.code]) { input[KEYS[e.code]] = false; $(KEYS[e.code] === 'gas' ? 'gasP' : 'brakeP').classList.remove('held'); }
+});
 addEventListener('blur', clearInput);
 
 /* ---------------- scene manager ---------------- */
@@ -389,7 +499,8 @@ let scene = null, sceneId = 0;
 function go(name) {
   sceneId++; clearInput();
   $('overlay').className = ''; $('overlay').innerHTML = '';
-  $('clip').className = '';
+  $('clip').className = ''; $('next').className = '';
+  clearControls();
   scene = scenes[name]; scene.enter();
 }
 function later(ms, fn) { const id = sceneId; setTimeout(() => { if (id === sceneId) fn(); }, ms); }
@@ -530,9 +641,10 @@ function drawTowRig(c, front, gy, st) {
    WORLD / ROAD RENDERING
    ============================================================ */
 function drawSky() {
-  const g = ctx.createLinearGradient(0, 0, 0, GROUND);
-  g.addColorStop(0, '#5fb3e6'); g.addColorStop(1, '#cfeaf7');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND);
+  const top = 540 - H;
+  const g = ctx.createLinearGradient(0, top, 0, GROUND);
+  g.addColorStop(0, '#4aa6de'); g.addColorStop(1, '#cfeaf7');
+  ctx.fillStyle = g; ctx.fillRect(0, top, W, GROUND - top);
   ctx.fillStyle = '#fff3a8'; ctx.beginPath(); ctx.arc(820, 80, 38, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(255,243,168,.25)'; ctx.beginPath(); ctx.arc(820, 80, 58, 0, Math.PI * 2); ctx.fill();
 }
@@ -545,7 +657,7 @@ function drawBackdrop(camX) {
   // clouds
   ctx.fillStyle = 'rgba(255,255,255,.85)';
   for (let i = -1; i < 6; i++) {
-    const cx = ((i * 260 - camX * .05) % 1300 + 1300) % 1300 - 150, cy = 60 + hash(i) * 70;
+    const span = W + 400, cx = ((i * 260 - camX * .05) % span + span) % span - 150, cy = 60 + hash(i) * 70;
     ctx.beginPath(); ctx.arc(cx, cy, 22, 0, 7); ctx.arc(cx + 24, cy - 8, 26, 0, 7); ctx.arc(cx + 50, cy, 20, 0, 7); ctx.fill();
   }
   // mid: palms & cacti
@@ -673,25 +785,28 @@ function drawPopups() {
   popups.forEach((p, i) => {
     ctx.globalAlpha = 1 - p.t / 1.8;
     ctx.font = 'bold 42px system-ui,sans-serif'; ctx.textAlign = 'center';
-    ctx.lineWidth = 6; ctx.strokeStyle = '#111'; ctx.strokeText(p.text, W / 2, 150 - p.t * 50 + (i % 3) * 8);
-    ctx.fillStyle = p.color; ctx.fillText(p.text, W / 2, 150 - p.t * 50 + (i % 3) * 8);
+    const y = H * .42 - p.t * 50 + (i % 3) * 8;
+    ctx.lineWidth = 6; ctx.strokeStyle = '#111'; ctx.strokeText(p.text, W / 2, y);
+    ctx.fillStyle = p.color; ctx.fillText(p.text, W / 2, y);
   });
   ctx.globalAlpha = 1;
 }
 function drawSpeedo(v, limit) {
   const mph = Math.round(v / 6);
-  ctx.fillStyle = 'rgba(0,0,0,.65)'; rr(ctx, W - 130, 14, 116, 64, 10); ctx.fill();
+  const x = W / 2 + 6, y = 470;
+  ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, x, y, 130, 62, 10); ctx.fill();
   ctx.fillStyle = limit && mph > limit + 3 ? '#ff6b6b' : '#fff';
-  ctx.font = 'bold 34px system-ui,sans-serif'; ctx.textAlign = 'right'; ctx.fillText(mph, W - 58, 58);
-  ctx.font = 'bold 12px system-ui,sans-serif'; ctx.fillStyle = '#aaa'; ctx.fillText('MPH', W - 22, 58);
-  if (limit) { ctx.fillStyle = '#f5d90a'; ctx.font = 'bold 11px system-ui,sans-serif'; ctx.fillText('LIMIT ' + limit, W - 22, 72); }
+  ctx.font = 'bold 34px system-ui,sans-serif'; ctx.textAlign = 'right'; ctx.fillText(mph, x + 76, y + 42);
+  ctx.font = 'bold 12px system-ui,sans-serif'; ctx.fillStyle = '#aaa'; ctx.fillText('MPH', x + 116, y + 42);
+  if (limit) { ctx.fillStyle = '#f5d90a'; ctx.font = 'bold 11px system-ui,sans-serif'; ctx.fillText('LIMIT ' + limit, x + 116, y + 56); }
 }
 function drawProgress(p, label) {
-  ctx.fillStyle = 'rgba(0,0,0,.55)'; rr(ctx, 20, 14, 300, 30, 8); ctx.fill();
-  ctx.fillStyle = '#444'; ctx.fillRect(32, 34, 276, 5);
-  ctx.fillStyle = '#f5d90a'; ctx.fillRect(32, 34, 276 * clamp(p, 0, 1), 5);
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui,sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('🚚 → ' + label, 32, 28);
+  const x = W / 2 - 196, y = 470, w = 190;
+  ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, x, y, w, 62, 10); ctx.fill();
+  ctx.fillStyle = '#444'; ctx.fillRect(x + 12, y + 38, w - 24, 8);
+  ctx.fillStyle = '#f5d90a'; ctx.fillRect(x + 12, y + 38, (w - 24) * clamp(p, 0, 1), 8);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 15px system-ui,sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('To the ' + label.toLowerCase(), x + 12, y + 26);
 }
 function drawFade() {
   if (fade <= 0) return;
@@ -712,13 +827,10 @@ function honk() {
     'BEEEP! A cow in a field looked up. Respect.', 'HONK! The horn is the loudest thing on this truck. And me.'];
   say(lines[Math.floor(Math.random() * lines.length)], 'happy');
 }
-function driveControls(extra) {
-  setControls(
-    group('Drive', holdBtn('◀ BRAKE', 'brake', null, 'pedal warn', input), holdBtn('GAS ▶', 'gas', null, 'pedal go', input)),
-    group('Fun', btn('📯 Honk', honk)),
-    extra
-  );
-}
+function driveControls() { clearControls(); setLayout('drive'); }
+bindHold($('gasP'), 'gas', null, input);
+bindHold($('brakeP'), 'brake', null, input);
+$('honk').onclick = e => { e.preventDefault(); honk(); };
 function makeWorld(cfg) {
   return Object.assign({ x: 450, v: 0, wheel: 0, mode: 'driving', events: [], hazards: false, triangles: false, sputter: false }, cfg);
 }
@@ -735,8 +847,9 @@ function driveStep(w, dt) {
   w.x += w.v * dt; w.wheel += w.v * dt / 20;
   w.events.forEach(e => e.update && e.update(w, dt));
 }
+const camOf = w => w.x - W * .62;
 function renderWorld(w, extra = {}) {
-  const camX = w.x - 620;
+  const camX = camOf(w);
   drawSky(); drawBackdrop(camX);
   if (w.sites) w.sites.forEach(s => (s.kind === 'jobsite' ? drawJobsite : drawBranch)(s.x - camX));
   drawRoad(camX);
@@ -852,7 +965,7 @@ const scenes = {};
 scenes.title = {
   enter() {
     setPhase('Clock in to start your shift');
-    $('controls').innerHTML = '';
+    setLayout('full');
     const ov = $('overlay'); ov.className = 'show';
     ov.innerHTML = `
       <div class="card">
@@ -860,8 +973,8 @@ scenes.title = {
         <p>You're a Sunbelt driver with a rollback, a generator, and a <i>dream</i>.
         Drop the generator at the jobsite, then head back to the branch. What could possibly go wrong?</p>
         <ul>
-          <li><b>Drive:</b> hold <b>GAS</b> / <b>BRAKE</b> (or ← → keys)</li>
-          <li><b>Unload:</b> follow the clipboard — the next step is highlighted</li>
+          <li><b>Drive:</b> hold the <b>GAS</b> / <b>BRAKE</b> pedals with your thumbs (or ← → keys)</li>
+          <li><b>Unload:</b> follow the clipboard. It always shows your next step</li>
           <li>Do it right = <span class="plus">+points</span>. Mess it up = <span class="minus">–points</span>.</li>
         </ul>
         <label for="nm">Driver name</label>
@@ -874,9 +987,12 @@ scenes.title = {
   },
   update() {},
   render() {
-    drawSky(); drawBackdrop(time * 40); drawBranch(560); drawRoad(time * 40);
+    drawSky(); drawBackdrop(time * 40); drawRoad(time * 40);
+    ctx.save(); ctx.translate(OX() + 60, 0);
+    drawBranch(560);
     drawRollback(ctx, 250, GY, { gen: 'bed', chains: true, wheel: 0, beacon: true });
     drawPerson(ctx, 800, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true }));
+    ctx.restore();
   }
 };
 
@@ -897,12 +1013,12 @@ scenes.drive1 = {
       parkZone(dest, 'jobsite', () => go('unload')),
     ];
     driveControls();
-    say('Generator\'s chained down. Hold GAS (or → key) to go, BRAKE (← key) to stop. Let\'s make some money.');
+    say('Generator\'s chained down. Hold the green GAS pedal to go, red BRAKE to stop. Let\'s make some money.');
   },
   update(dt) { driveStep(this.w, dt); },
   render() {
     renderWorld(this.w);
-    if (this.w.x > 3700) drawPerson(ctx, this.w.dest - 20 - (this.w.x - 620), GROUND - 14, .45, Object.assign({}, CAST.foreman, { wave: true }));
+    if (this.w.x > 3700) drawPerson(ctx, this.w.dest - 20 - camOf(this.w), GROUND - 14, .45, Object.assign({}, CAST.foreman, { wave: true }));
   }
 };
 
@@ -929,15 +1045,16 @@ scenes.unload = {
       { id: 'sign', label: 'Get the foreman\'s signature', pts: 0, chk: () => false },
       { id: 'leave', label: 'Pull chocks + release brake, then head out', pts: 0, chk: () => false },
     ];
-    this.done = {};
-    $('clip').className = 'show';
+    this.done = {}; this.hintKey = null;
+    $('clip').className = 'show'; $('next').className = 'show';
     this.renderControls();
     say('We\'re here. Foreman wants it by the fence. Follow the clipboard and do NOT drop this thing — it costs more than my truck.');
     later(4500, () => say('You\'re late. Put it by the fence. And don\'t scratch my porta-john.', 'mad', 'foreman'));
   },
   renderControls() {
     const u = this.u, self = this;
-    const toggle = (label, key, fn) => { const b = btn(label + (u[key] ? ': ON' : ': OFF'), fn, u[key] ? 'on' : ''); return b; };
+    const toggle = (label, key, fn) => tag(btn(`${label}<small>${u[key] ? 'ON' : 'OFF'}</small>`, fn, u[key] ? 'on' : ''), key);
+    const tag = (b, k) => { b.dataset.k = k; return b; };
     const hyd = () => {
       if (!u.brake) { award(-10, 'Whoa! The truck lurched forward — no parking brake! The foreman spilled his coffee on his clipboard.', 'shock'); shake = 12; return false; }
       if (!u.pto) { award(-5, 'Nothing\'s happening... because the PTO is off. The levers are just decoration right now.', 'mad'); return false; }
@@ -945,48 +1062,47 @@ scenes.unload = {
     };
     setControls(
       group('Truck',
-        toggle('🅿️ Parking brake', 'brake', () => { u.brake = !u.brake; self.renderControls(); }),
-        btn(u.chocks ? '🧱 Chocks: IN' : '🧱 Chocks: OUT', () => { u.chocks = !u.chocks; sfx.thud(); self.renderControls(); }, u.chocks ? 'on' : ''),
+        toggle('🅿️ Brake', 'brake', () => { u.brake = !u.brake; self.renderControls(); }),
+        tag(btn(`🧱 Chocks<small>${u.chocks ? 'IN' : 'OUT'}</small>`, () => { u.chocks = !u.chocks; sfx.thud(); self.renderControls(); }, u.chocks ? 'on' : ''), 'chocks'),
         toggle('⚙️ PTO', 'pto', () => { u.pto = !u.pto; if (u.pto) sfx.crank(); self.renderControls(); })),
       group('Load',
-        btn(u.chains ? '⛓️ Remove chains' : '⛓️ Chains off', () => {
+        tag(btn(u.chains ? '⛓️ Remove chains' : '⛓️ Chains off', () => {
           if (!u.chains) return;
           if (u.tilt > 0) { award(-5, 'Crawling up a tilted bed to undo chains? Nope. Chains come off while the bed is flat.', 'mad'); return; }
           u.chains = false; sfx.click(); self.renderControls();
-        }, u.chains ? '' : 'on'),
-        btn(u.cable ? '🪝 Unhook cable' : '🪝 Unhooked', () => {
+        }, u.chains ? '' : 'on'), 'chains'),
+        tag(btn(u.cable ? '🪝 Unhook cable' : '🪝 Unhooked', () => {
           if (!u.cable) return;
           if (u.gen !== 'ground') { award(-5, 'NOT YET! That cable is the only thing keeping the generator from going on an adventure.', 'shock'); return; }
           u.cable = false; self.renderControls();
-        }, u.cable ? '' : 'on')),
-      group('Bed tilt (hold)',
-        holdBtn('▲ Tilt up', 'tiltUp', () => hyd()),
-        holdBtn('▼ Tilt down', 'tiltDown', () => {
+        }, u.cable ? '' : 'on'), 'cable')),
+      group('Bed · press & hold',
+        tag(holdBtn('▲ Tilt up', 'tiltUp', () => hyd()), 'tiltUp'),
+        tag(holdBtn('▼ Tilt down', 'tiltDown', () => {
           if (!hyd()) return false;
           if (u.slide > 0) { award(-5, 'Slide the bed forward BEFORE lowering it, or we\'re bending something expensive.', 'mad'); return false; }
-        })),
-      group('Bed slide (hold)',
-        holdBtn('◀ Slide back', 'slideBack', () => {
+        }), 'tiltDown'),
+        tag(holdBtn('◀ Slide back', 'slideBack', () => {
           if (!hyd()) return false;
           if (u.tilt < .99) { award(-5, 'Tilt the bed up first, chief. Sliding it flat just grinds the frame.', 'mad'); return false; }
-        }),
-        holdBtn('Slide fwd ▶', 'slideFwd', () => {
+        }), 'slideBack'),
+        tag(holdBtn('Slide fwd ▶', 'slideFwd', () => {
           if (!hyd()) return false;
           if (u.gen === 'ground' && u.cable) { award(-10, 'The cable\'s still hooked! I just dragged the generator a foot back toward the truck.', 'shock'); return false; }
-        })),
-      group('Winch (tap it!)',
-        holdBtn('🔽 Winch out', 'winchOut', () => {
+        }), 'slideFwd')),
+      group('Winch · tap, don\'t hold!',
+        tag(holdBtn('🔽 Winch out', 'winchOut', () => {
           if (!hyd()) return false;
           if (u.gen !== 'bed') { say('It\'s already off the truck, bud.', 'happy'); return false; }
           if (u.chains) { award(-10, 'The chains are still on! The winch is groaning like my knees on a Monday.', 'mad'); return false; }
-        }),
-        holdBtn('🔼 Winch in', 'winchIn', () => {
+        }), 'winchOut'),
+        tag(holdBtn('🔼 Winch in', 'winchIn', () => {
           if (!hyd()) return false;
           if (u.gen === 'ground' && u.cable) { award(-5, 'Whoa, I almost pulled the generator back on! Unhook the cable instead.', 'shock'); return false; }
-        })),
+        }), 'winchIn')),
       group('Paperwork',
-        btn('✍️ Get signature', () => self.sign(), u.signed ? 'on' : ''),
-        btn('🚚 Head back to branch', () => self.leave(), 'go')),
+        tag(btn('✍️ Get signature', () => self.sign(), u.signed ? 'on' : ''), 'sign'),
+        tag(btn('🚚 Head out', () => self.leave(), 'go'), 'leave')),
     );
     this.renderClip();
   },
@@ -999,7 +1115,23 @@ scenes.unload = {
       if (s.bonus) cls += ' bonus';
       return `<li class="${cls}">${d ? '✔ ' : ''}${s.label}</li>`;
     }).join('');
-    $('clip').innerHTML = `<h3>📋 Unload Checklist</h3><ol>${items}</ol>`;
+    const open = $('clip').open;
+    $('clip').innerHTML = `<summary>📋 Full checklist</summary><ol>${items}</ol>`;
+    $('clip').open = open;
+    const req = this.steps.filter(s => !s.bonus), n = req.findIndex(s => !this.done[s.id]);
+    $('next').innerHTML = n < 0 ? '<b>Clipboard</b>All done! 🎉'
+      : `<b>📋 Next step · ${n + 1} of ${req.length}</b>${req[n].label}`;
+    // glow + scroll to the button that does the next step
+    const u = this.u, id = n < 0 ? null : req[n].id;
+    const key = { brake: 'brake', pto: 'pto', chains: 'chains', tilt: 'tiltUp', slide: 'slideBack', winch: 'winchOut',
+      cable: 'cable', fwd: 'slideFwd', lower: 'tiltDown', ptooff: 'pto', sign: 'sign',
+      leave: u.chocks ? 'chocks' : u.brake ? 'brake' : 'leave' }[id];
+    document.querySelectorAll('#controls .hint').forEach(b => b.classList.remove('hint'));
+    const hb = key && document.querySelector(`#controls [data-k="${key}"]`);
+    if (hb) {
+      hb.classList.add('hint');
+      if (this.hintKey !== key) { this.hintKey = key; hb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    }
   },
   complete(id, pts, msg) {
     if (this.done[id]) return;
@@ -1034,7 +1166,7 @@ scenes.unload = {
       say(u.chocks ? '*CRUNCH* ...I ran over my own wheel chocks. They\'re wheel chips now.' + (u.brake ? ' AND the parking brake was on. Smells like money burning.' : '')
                    : 'Smell that? I drove off with the parking brake on. That\'s the smell of money burning.', 'shock');
     }
-    $('controls').innerHTML = '';
+    clearControls();
     later(2600, () => go('drive2'));
   },
   update(dt) {
@@ -1084,9 +1216,10 @@ scenes.unload = {
     const u = this.u;
     drawSky(); drawBackdrop(3000);
     ctx.fillStyle = '#b9955f'; ctx.fillRect(0, GROUND - 24, W, H);
+    ctx.save(); ctx.translate(OX(), 0);
     drawJobsite(470);
-    ctx.fillStyle = '#a8864f'; ctx.fillRect(0, GROUND + 2, W, H);
-    for (let i = 0; i < 30; i++) { ctx.fillStyle = '#967545'; ctx.fillRect((i * 97) % W, GROUND + 20 + (i * 37) % 70, 14, 4); }
+    ctx.fillStyle = '#a8864f'; ctx.fillRect(-OX(), GROUND + 2, W, H);
+    for (let i = 0; i < 40; i++) { ctx.fillStyle = '#967545'; ctx.fillRect((i * 97) % W - OX(), GROUND + 20 + (i * 37) % 70, 14, 4); }
     drawRollback(ctx, X0, GY, Object.assign({}, u, { beacon: u.pto, wheel: 0 }));
     if (u.chocks) { ctx.fillStyle = '#f5d90a'; [X0 + 44, X0 + 250].forEach(x => { ctx.beginPath(); ctx.moveTo(x, GY); ctx.lineTo(x + 12, GY - 12); ctx.lineTo(x + 12, GY); ctx.fill(); }); }
     drawPerson(ctx, 770, GROUND + 50, .6, Object.assign({}, CAST.driver, { mood: S.mood }));
@@ -1094,14 +1227,16 @@ scenes.unload = {
     drawParticles(0);
     // winch speed gauge
     if (u.gen === 'bed' && !u.chains) {
-      ctx.fillStyle = 'rgba(0,0,0,.6)'; rr(ctx, 20, 14, 220, 50, 8); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui,sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('WINCH SPEED — keep it out of the red', 30, 30);
-      ctx.fillStyle = '#333'; ctx.fillRect(30, 38, 200, 14);
-      ctx.fillStyle = '#3c9d4f'; ctx.fillRect(30, 38, 200 * 85 / 130, 14);
-      ctx.fillStyle = '#c94440'; ctx.fillRect(30 + 200 * 85 / 130, 38, 200 * 45 / 130, 14);
-      ctx.fillStyle = '#fff'; ctx.fillRect(30 + 200 * u.ws / 130 - 2, 34, 4, 22);
+      const gx = 180, gy = 150, gw = 370;
+      ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, gx, gy, gw + 40, 78, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('WINCH SPEED · stay out of the red', gx + 20, gy + 30);
+      ctx.fillStyle = '#333'; ctx.fillRect(gx + 20, gy + 42, gw, 22);
+      ctx.fillStyle = '#3c9d4f'; ctx.fillRect(gx + 20, gy + 42, gw * 85 / 130, 22);
+      ctx.fillStyle = '#c94440'; ctx.fillRect(gx + 20 + gw * 85 / 130, gy + 42, gw * 45 / 130, 22);
+      ctx.fillStyle = '#fff'; ctx.fillRect(gx + 20 + gw * u.ws / 130 - 3, gy + 36, 6, 34);
     }
+    ctx.restore();
   }
 };
 
@@ -1192,7 +1327,7 @@ scenes.drive2 = {
     const w = this.w;
     if (!w.hazards) { w.hazards = true; award(-10, 'No hazards on?! Cars are flying by at 70. Hazards on NOW.', 'shock'); }
     else if (!w.triangles) { award(-5, 'Forgot the triangles. A semi just blew my hat half off.', 'shock'); }
-    $('controls').innerHTML = '';
+    clearControls();
     if (choice === 'tow') { later(1600, () => go('tow')); return; }
     const keys = Object.keys(PROBLEMS);
     this.fix = { prob: PROBLEMS[keys[Math.floor(Math.random() * keys.length)]], diagnosed: false, tries: 3, used: {} };
@@ -1215,7 +1350,7 @@ scenes.drive2 = {
       group('Inspect', inspect('dash', '📟 Dashboard'), inspect('hood', '🔩 Under the hood'), inspect('battery', '🔋 Battery box'),
             inspect('tank', '🛢️ Fuel/DEF tanks'), inspect('tires', '🛞 Tires')),
       group(`Toolbox · ${f.tries} ${f.tries === 1 ? 'try' : 'tries'} left`, ...tools),
-      group('Give up?', btn('📞 Call a tow instead', () => { $('controls').innerHTML = ''; say('Alright, alright. Calling it in.', 'mad'); later(1200, () => go('tow')); }))
+      group('Give up?', btn('📞 Call a tow instead', () => { clearControls(); say('Alright, alright. Calling it in.', 'mad'); later(1200, () => go('tow')); }))
     );
   },
   useTool(id) {
@@ -1224,7 +1359,7 @@ scenes.drive2 = {
       const pts = 30 + (f.diagnosed ? 10 : 0);
       award(pts, `Fixed the ${f.prob.name}! ${f.diagnosed ? 'Diagnosed it AND fixed it. ' : 'Lucky guess! '}Who needs a mechanic? (Me. Usually me.)`);
       sfx.vroom();
-      $('controls').innerHTML = '';
+      clearControls();
       later(2400, () => {
         w.sputter = false; w.hazards = false; w.triangles = false; w.driverOut = false; w.mode = 'driving';
         setPhase('Part 3 of 3 · Head back to the branch');
@@ -1236,14 +1371,14 @@ scenes.drive2 = {
     f.used[id] = true; f.tries--;
     if (id === 'gas') {
       award(-20, WRONG.gas, 'shock');
-      $('controls').innerHTML = '';
+      clearControls();
       later(2800, () => { say('Yeah... she\'s not starting again. Calling a tow.', 'mad'); later(1800, () => go('tow')); });
       return;
     }
     const lbl = TOOLS.find(t => t[0] === id)[1].replace(/^\S+\s/, '');
     award(-10, WRONG[id] || `Tried the ${lbl.toLowerCase()}. Wasn't the problem. The truck remains unimpressed.`, 'mad');
     if (f.tries <= 0) {
-      $('controls').innerHTML = '';
+      clearControls();
       later(2400, () => { say('Out of ideas. This truck is held together by duct tape and shame. Calling a tow.', 'mad'); later(2000, () => go('tow')); });
       return;
     }
@@ -1259,14 +1394,15 @@ scenes.tow = {
     const w = this.w = scenes.drive2.w;
     w.mode = 'towing'; this.phase = 'call';
     setPhase('Part 3 of 3 · Waiting on a tow');
+    setLayout('full');
     sfx.ring();
-    $('controls').innerHTML = '';
+    clearControls();
     say('Dispatch, go ahead.', 'happy', 'dispatch');
     later(1600, () => award(-10, 'We\'ll send the heavy rollback. ETA 45 minutes. And yes — we\'re putting this in the newsletter.', 'happy', 'dispatch'));
     later(4200, () => {
       say('45 minutes on the side of the road. What\'s the move?', 'happy');
       const pick = (pts, msg, mood) => () => {
-        $('controls').innerHTML = '';
+        clearControls();
         award(pts, msg, mood);
         later(2800, () => this.arrive());
       };
@@ -1278,6 +1414,7 @@ scenes.tow = {
     });
   },
   arrive() {
+    setLayout('full');
     fadeText = '45 minutes later...';
     this.phase = 'fadeout';
     later(2600, () => {
@@ -1317,7 +1454,7 @@ function rank(s) {
 scenes.end = {
   enter() {
     setPhase('Shift complete!');
-    $('controls').innerHTML = '';
+    setLayout('full');
     const [r, sub] = rank(S.score);
     const log = S.log.filter(l => l.pts !== 0).map(l =>
       `<li><span class="p ${l.pts > 0 ? 'plus' : 'minus'}">${l.pts > 0 ? '+' : ''}${l.pts}</span><span>${l.msg.replace(/</g, '&lt;')}</span></li>`).join('');
@@ -1338,9 +1475,12 @@ scenes.end = {
   },
   update() {},
   render() {
-    drawSky(); drawBackdrop(1000); drawBranch(480); drawRoad(1000);
+    drawSky(); drawBackdrop(1000); drawRoad(1000);
+    ctx.save(); ctx.translate(OX(), 0);
+    drawBranch(480);
     drawRollback(ctx, 60, GY, { gen: 'none', wheel: 0 });
     drawPerson(ctx, 480, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true, mood: S.score >= 80 ? 'happy' : 'shock' }));
+    ctx.restore();
   }
 };
 
@@ -1353,7 +1493,9 @@ function frame(t) {
   if (scene) scene.update(dt);
   updateParticles(dt);
   shake = Math.max(0, shake - dt * 30);
+  ctx.setTransform(K, 0, 0, K, 0, 0);
   ctx.save();
+  ctx.translate(0, H - 540);   // extra height becomes sky above the scene
   if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
   if (scene) scene.render();
   ctx.restore();
@@ -1361,6 +1503,9 @@ function frame(t) {
   drawFade();
   requestAnimationFrame(frame);
 }
+addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe($('stage'));
+resize();
 newGame('Big Earl');
 go('title');
 requestAnimationFrame(frame);
