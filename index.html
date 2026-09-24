@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111417">
+<title>Rollback Rodeo</title>
+<style>
+  :root{
+    --bg:#111417; --panel:#22272d; --ink:#f3f1ea; --muted:#aab0b8;
+    --yellow:#f5d90a; --green:#1f7a3a; --red:#c94440; --btn:#353c44; --btnh:#434b55;
+    --pedal:clamp(72px, 25vh, 124px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);overscroll-behavior:none;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:100%}
+  input{-webkit-user-select:text;user-select:text}
+
+  /* ---- layout: game on the left, control panel on the right (landscape first) ---- */
+  #app{position:fixed;inset:0;display:flex;flex-direction:row;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  #stage{position:relative;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:#87c6e8}
+  canvas#game{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #side{flex:0 0 clamp(230px, 36vw, 380px);display:flex;flex-direction:column;gap:8px;padding:8px;
+    background:var(--panel);overflow-y:auto;-webkit-overflow-scrolling:touch;border-left:3px solid #000}
+  body.full #side, body.drive #side{display:none}
+
+  /* ---- floating top bar: dialog + score ---- */
+  #topbar{position:absolute;top:6px;left:6px;right:6px;display:flex;gap:6px;align-items:flex-start;pointer-events:none;z-index:2}
+  #dialog{flex:1;display:flex;gap:8px;align-items:center;background:rgba(20,24,28,.86);border-radius:12px;
+    padding:5px 10px 5px 5px;border-left:5px solid var(--yellow);min-width:0}
+  #portrait{width:46px;height:46px;border-radius:50%;flex:none;border:2px solid #000;background:#9fd3ef}
+  #speaker{font-weight:800;color:var(--yellow);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  #text{font-size:clamp(12px, 1.25vw + 6px, 16px);line-height:1.3}
+  #hud{display:flex;flex-direction:column;gap:4px;align-items:flex-end;pointer-events:auto}
+  #score{font-weight:900;font-size:clamp(14px, 1.2vw + 8px, 20px);background:#000;padding:3px 10px;border-radius:8px;
+    border:2px solid var(--yellow);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mini{display:flex;gap:4px}
+  .mini button{background:rgba(20,24,28,.86);border:0;color:var(--ink);border-radius:8px;width:36px;height:32px;font-size:16px;cursor:pointer}
+
+  /* ---- driving pedals (thumb zones) ---- */
+  #pedals{position:absolute;left:10px;right:10px;bottom:10px;display:none;justify-content:space-between;align-items:flex-end;
+    pointer-events:none;z-index:2}
+  body.drive #pedals{display:flex}
+  #pedals .side{display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:auto}
+  .pedal{width:var(--pedal);height:var(--pedal);border-radius:50%;border:4px solid rgba(0,0,0,.55);font-weight:900;
+    font-size:calc(var(--pedal) * .19);color:#111;cursor:pointer;touch-action:none;box-shadow:0 5px 0 rgba(0,0,0,.45);
+    font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+  .pedal small{font-size:.55em;opacity:.7;margin-top:2px}
+  .pedal.gas{background:rgba(99,209,122,.92)}
+  .pedal.brk{background:rgba(214,69,65,.92);color:#fff}
+  .pedal.held{transform:translateY(4px);box-shadow:0 1px 0 rgba(0,0,0,.45);filter:brightness(1.15)}
+  #honk{background:rgba(20,24,28,.86);color:#fff;border:0;border-radius:20px;padding:8px 14px;font-size:14px;font-weight:700;font-family:inherit}
+
+  /* ---- overlays (title / end cards) ---- */
+  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:flex-start;z-index:3;
+    background:linear-gradient(90deg,rgba(10,12,14,.82),rgba(10,12,14,.1));padding:12px}
+  #overlay.show{display:flex}
+  #overlay.center{justify-content:center;background:rgba(10,12,14,.6)}
+  .card{background:var(--panel);border-radius:14px;padding:14px 18px;max-width:430px;width:100%;
+    max-height:100%;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.5);border-top:6px solid var(--yellow)}
+  .card h1{margin:0 0 4px;font-size:26px;color:var(--yellow);line-height:1.1}
+  .card h2{margin:0 0 6px;font-size:20px}
+  .card p{margin:6px 0;line-height:1.35;font-size:14px}
+  .card ul{margin:6px 0 8px;padding-left:18px;font-size:13px;line-height:1.4;color:#dfe2e6}
+  .card label{font-size:12px;color:var(--muted);display:block;margin-top:6px}
+  .card input{width:100%;font-size:16px;padding:8px 10px;border-radius:8px;border:2px solid #444;
+    background:#111;color:var(--ink);margin:4px 0 10px}
+  .log{list-style:none;padding:0 !important;margin:8px 0 12px !important}
+  .log li{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #333;font-size:13px}
+  .log .p{font-weight:800;min-width:38px;text-align:right;font-variant-numeric:tabular-nums}
+  .plus{color:#63d17a}.minus{color:#ff6b6b}
+  .final{font-size:40px;font-weight:900;color:var(--yellow);margin:2px 0}
+  .rank{font-weight:800;font-size:17px}
+
+  /* ---- job/map picker ---- */
+  .card.wide{max-width:600px}
+  .maps{display:flex;gap:12px;margin:10px 0;flex-wrap:wrap}
+  .mapcard{flex:1 1 240px;background:var(--btn);border:2px solid #14171a;border-radius:12px;padding:12px 14px;
+    cursor:pointer;text-align:left;color:var(--ink);font-family:inherit;display:flex;flex-direction:column;gap:6px}
+  .mapcard:hover{background:var(--btnh);border-color:var(--yellow)}
+  .mapcard h3{margin:0;font-size:16px}
+  .mapcard p{margin:0;font-size:12.5px;color:#dfe2e6;line-height:1.35}
+  .badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+    padding:2px 8px;border-radius:20px;align-self:flex-start}
+  .badge.easy{background:#2f8f4a;color:#fff}
+  .badge.hard{background:#c94440;color:#fff}
+
+  /* ---- side panel contents ---- */
+  #phase{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  #next{display:none;background:#caa46c;color:#231a0e;border-radius:10px;padding:7px 10px;font-size:14px;line-height:1.3;
+    border-top:8px solid #6b6b6b}
+  #next.show{display:block}
+  #next b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;opacity:.75}
+  #controls{display:flex;flex-direction:column;gap:6px}
+  .group h4{margin:0 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px}
+  .row:has(> :nth-child(3):last-child){grid-template-columns:repeat(3,1fr)}
+  .row:has(> :nth-child(4):last-child){grid-template-columns:1fr 1fr}
+  button.b small{display:block;font-size:11px;opacity:.8;margin-top:1px}
+  button.b.hint{box-shadow:0 0 0 3px var(--yellow);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 5px rgba(245,217,10,.35)}}
+  button.b{background:var(--btn);color:var(--ink);border:0;border-bottom:3px solid #14171a;border-radius:9px;
+    padding:8px 8px;font-size:14px;font-weight:700;cursor:pointer;min-height:46px;font-family:inherit;line-height:1.15}
+  button.b.hold{touch-action:none;-webkit-touch-callout:none}
+  button.b:hover{background:var(--btnh)}
+  button.b:active,button.b.held{transform:translateY(2px);border-bottom-width:1px}
+  button.b.on{background:var(--green)}
+  button.b.go{background:var(--yellow);color:#111}
+  button.b.warn{background:var(--red)}
+  button.b:disabled{opacity:.35;cursor:not-allowed}
+  button.big{font-size:19px;padding:12px 20px;width:100%}
+  #clip{display:none;background:#caa46c;color:#231a0e;border-radius:10px;padding:6px 10px}
+  #clip.show{display:block}
+  #clip summary{font-weight:800;font-size:13px;cursor:pointer}
+  #clip ol{margin:6px 0 2px;padding-left:20px;font-size:12.5px;line-height:1.4}
+  #clip li.done{text-decoration:line-through;opacity:.55}
+  #clip li.next{font-weight:800;background:rgba(255,255,255,.35);border-radius:4px}
+  #clip li.bonus{font-style:italic}
+
+  /* ---- rotate prompt (phones held upright) ---- */
+  #rotate{display:none;position:fixed;inset:0;z-index:10;background:#111417;color:var(--ink);
+    flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:14px}
+  #rotate .ph{font-size:64px;animation:turn 1.6s ease-in-out infinite}
+  @keyframes turn{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(90deg)}}
+  #rotate h2{margin:0;color:var(--yellow)}
+  #rotate p{margin:0;color:var(--muted);max-width:280px}
+  @media (orientation:portrait) and (pointer:coarse){
+    body:not(.portrait-ok) #rotate{display:flex}
+  }
+  /* portrait fallback: stack game over controls */
+  @media (orientation:portrait){
+    #app{flex-direction:column}
+    #stage{flex:0 0 auto;aspect-ratio:16/10;width:100%}
+    body.drive #stage, body.full #stage{flex:1 1 auto;aspect-ratio:auto}
+    #side{flex:1 1 auto;border-left:0;border-top:3px solid #000}
+    :root{--pedal:clamp(72px, 24vw, 120px)}
+  }
+  @media (max-height:430px){
+    .card h1{font-size:21px} .card p{font-size:13px} .card ul{font-size:12px;margin:4px 0} .card{padding:10px 14px}
+    .card input{padding:6px 8px;margin:2px 0 8px} button.big{padding:9px 16px;font-size:17px}
+    #portrait{width:40px;height:40px}
+  }
+</style>
+</head>
+<body class="full">
+<div id="app">
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="topbar">
+      <div id="dialog">
+        <canvas id="portrait" width="110" height="110"></canvas>
+        <div>
+          <div id="speaker">Driver</div>
+          <div id="text">Ready when you are, boss.</div>
+        </div>
+      </div>
+      <div id="hud">
+        <div id="score">0 pts</div>
+        <div class="mini">
+          <button id="fs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+          <button id="mute" title="Sound on/off" aria-label="Sound on/off">🔊</button>
+        </div>
+      </div>
+    </div>
+    <div id="pedals">
+      <div class="side"><button id="honk">📯 Honk</button><button class="pedal brk" id="brakeP">BRAKE<small>◀ / A</small></button></div>
+      <div class="side"><button class="pedal gas" id="gasP">GAS<small>▶ / D</small></button></div>
+    </div>
+    <div id="overlay"></div>
+  </div>
+  <div id="side">
+    <div id="phase">Clock in to start your shift</div>
+    <div id="next"></div>
+    <div id="controls"></div>
+    <details id="clip"></details>
+  </div>
+</div>
+<div id="rotate">
+  <div class="ph">📱</div>
+  <h2>Turn your phone sideways</h2>
+  <p>Rollback Rodeo plays best in landscape. Big trucks need wide screens.</p>
+  <button class="b" id="portraitOk">Play upright anyway</button>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   ROLLBACK RODEO — a (mostly) safe day in the life of a
+   rollback driver. Plain canvas + DOM, no dependencies.
+   ============================================================ */
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const GROUND = 440, GY = GROUND + 5;
+// Logical canvas size. The scene is authored around 960x540; the canvas grows wider
+// (landscape phones) or taller (narrow panels) to fill its box, never letterboxed.
+let W = 960, H = 540, K = 1;
+function resize() {
+  const r = $('stage').getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const a = r.width / r.height;
+  if (a >= 16 / 9) { H = 540; W = Math.round(540 * a); } else { W = 960; H = Math.round(960 / a); }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  K = cv.width / W;
+}
+// horizontal offset that centers fixed 960-wide scenes
+const OX = () => (W - 960) / 2;
+const $ = id => document.getElementById(id);
+
+/* ---------------- sound ---------------- */
+let AC = null, muted = false;
+function tone(f, d, type = 'square', vol = 0.05, when = 0) {
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    const t = AC.currentTime + when;
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t + d + 0.03);
+  } catch (e) { /* audio is optional */ }
+}
+const sfx = {
+  good()  { tone(660, .09, 'square', .04); tone(990, .16, 'square', .04, .09); },
+  bad()   { tone(180, .28, 'sawtooth', .05); tone(120, .3, 'sawtooth', .04, .12); },
+  horn()  { tone(330, .45, 'sawtooth', .05); tone(415, .45, 'sawtooth', .04); },
+  beep()  { tone(1050, .22, 'sine', .05); },
+  thud()  { tone(70, .35, 'triangle', .25); tone(50, .4, 'sine', .2, .03); },
+  crank() { for (let i = 0; i < 5; i++) tone(90 + (i % 2) * 30, .12, 'sawtooth', .05, i * .16); },
+  vroom() { tone(80, .6, 'sawtooth', .06); tone(120, .5, 'sawtooth', .05, .25); tone(160, .4, 'sawtooth', .04, .5); },
+  click() { tone(1400, .03, 'square', .03); },
+  ring()  { for (let i = 0; i < 2; i++) { tone(880, .12, 'sine', .04, i * .3); tone(1100, .12, 'sine', .04, i * .3 + .12); } },
+  screech(){ tone(720, .22, 'sawtooth', .05); tone(560, .26, 'sawtooth', .04, .04); },
+};
+$('mute').onclick = () => {
+  muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊';
+  if (muted && engineGain) engineGain.gain.setTargetAtTime(0, AC.currentTime, .05);
+};
+let engineOsc = null, engineGain = null;
+function engineStart() {
+  if (engineOsc) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    engineOsc = AC.createOscillator(); engineOsc.type = 'sawtooth';
+    engineGain = AC.createGain(); engineGain.gain.value = 0;
+    engineOsc.connect(engineGain); engineGain.connect(AC.destination);
+    engineOsc.frequency.value = 55; engineOsc.start();
+  } catch (e) { /* audio is optional */ }
+}
+function engineUpdate(v) {
+  if (!engineOsc || !AC) return;
+  const mph = v / 6;
+  try {
+    engineOsc.frequency.setTargetAtTime(55 + mph * 2.4, AC.currentTime, .08);
+    engineGain.gain.setTargetAtTime(muted ? 0 : .03, AC.currentTime, .12);
+  } catch (e) {}
+}
+function engineStop() {
+  if (!engineOsc) return;
+  try { engineGain.gain.setTargetAtTime(0, AC.currentTime, .15); engineOsc.stop(AC.currentTime + .3); } catch (e) {}
+  engineOsc = null; engineGain = null;
+}
+$('fs').onclick = () => {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) Promise.resolve(req.call(el)).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => {});
+  }
+};
+if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) $('fs').style.display = 'none';
+$('portraitOk').onclick = () => document.body.classList.add('portrait-ok');
+
+/* ---------------- helpers ---------------- */
+function rr(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function line(c, x1, y1, x2, y2) { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); }
+function hash(i) { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+let time = 0;
+
+/* ---------------- characters ---------------- */
+const CAST = {
+  driver:  { skin:'#e0ac7e', shirt:'#4a4a4a', vest:'#f5e11a', pants:'#2f4a7a', hat:'cap', hatColor:'#1f5f2f',
+             beard:true, beardColor:'#5b3a21', tattoos:true, girth:1.25 },
+  foreman: { skin:'#c98e62', shirt:'#dfe6ee', vest:'#ff7a1a', pants:'#6b5a3e', hat:'hardhat', hatColor:'#ffffff',
+             beard:false, mustache:true, beardColor:'#3b2a1a', tattoos:false, girth:.85, clipboard:true },
+  dispatch:{ skin:'#8d5a3b', shirt:'#1f7a3a', vest:null, pants:'#333', hat:'headset', hair:'#1a1a1a',
+             beard:false, tattoos:false, girth:.85 },
+  tow:     { skin:'#b77b53', shirt:'#333', vest:'#f5e11a', pants:'#444', hat:'cap', hatColor:'#b22',
+             beard:true, beardColor:'#9a9a9a', tattoos:true, girth:1.05 },
+};
+
+function heart(c, x, y, s) {
+  c.beginPath(); c.moveTo(x, y + s * .35);
+  c.bezierCurveTo(x - s, y - s * .4, x - s * .4, y - s, x, y - s * .35);
+  c.bezierCurveTo(x + s * .4, y - s, x + s, y - s * .4, x, y + s * .35);
+  c.fill();
+}
+
+function drawArm(c, sx, sy, ex, ey, o, side) {
+  const dx = ex - sx, dy = ey - sy, L = Math.hypot(dx, dy);
+  c.save(); c.translate(sx, sy); c.rotate(Math.atan2(dy, dx) - Math.PI / 2);
+  c.lineCap = 'round';
+  c.strokeStyle = o.skin; c.lineWidth = 21; line(c, 0, 0, 0, L);
+  if (o.tattoos) {
+    // sleeve tattoo: tribal zig-zag + a heart / star
+    c.strokeStyle = 'rgba(29,62,95,.9)'; c.lineWidth = 2.6;
+    c.beginPath();
+    for (let t = .38; t <= .92; t += .07) {
+      const yy = L * t, xx = (Math.round(t * 100) % 2 ? 6 : -6);
+      t < .4 ? c.moveTo(xx, yy) : c.lineTo(xx, yy);
+    }
+    c.stroke();
+    if (side < 0) { c.fillStyle = '#9b1d3c'; heart(c, 0, L * .62, 7); }
+    else {
+      c.fillStyle = 'rgba(29,62,95,.95)';
+      c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 3 : 7.5;
+        c.lineTo(Math.cos(a) * r, L * .6 + Math.sin(a) * r);
+      }
+      c.closePath(); c.fill();
+    }
+    c.strokeStyle = 'rgba(29,62,95,.85)'; c.lineWidth = 2;
+    line(c, -8, L * .3, 8, L * .34);
+  }
+  c.strokeStyle = o.shirt; c.lineWidth = 26; line(c, 0, 0, 0, L * .24);
+  c.fillStyle = o.skin; c.beginPath(); c.arc(0, L + 4, 11, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+function drawPerson(c, x, y, s, opts) {
+  const o = Object.assign({ skin:'#e0ac7e', shirt:'#4a4a4a', vest:'#f5e11a', pants:'#2f4a7a', boots:'#5a3a1a',
+    hat:'cap', hatColor:'#1f5f2f', beard:true, beardColor:'#5b3a21', mustache:false, tattoos:false,
+    girth:1, mood:'happy', wave:false, clipboard:false, hair:'#3a2a1a', flip:false }, opts);
+  const g = o.girth, tw = 46 * g;
+  c.save(); c.translate(x, y); c.scale(o.flip ? -s : s, s);
+
+  // legs + boots
+  c.fillStyle = o.pants;
+  rr(c, -tw * .62, -74, 25, 66, 6); c.fill();
+  rr(c, tw * .62 - 25, -74, 25, 66, 6); c.fill();
+  c.fillStyle = o.boots;
+  rr(c, -tw * .62 - 4, -14, 33, 14, 5); c.fill();
+  rr(c, tw * .62 - 29, -14, 33, 14, 5); c.fill();
+
+  // torso
+  const torso = () => {
+    c.beginPath();
+    c.ellipse(0, -104, tw, 50, 0, 0, Math.PI * 2);
+    c.moveTo(tw * .92, -136); c.ellipse(0, -136, tw * .92, 22, 0, 0, Math.PI * 2);
+  };
+  c.fillStyle = o.shirt; torso(); c.fill();
+  if (o.vest) {
+    c.save(); torso(); c.clip();
+    c.fillStyle = o.vest; c.fillRect(-120, -170, 240, 104);
+    c.fillStyle = '#d9dde0';
+    c.fillRect(-120, -104, 240, 7); c.fillRect(-120, -88, 240, 7);
+    c.fillRect(-tw * .45 - 4, -165, 8, 62); c.fillRect(tw * .45 - 4, -165, 8, 62);
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 2; line(c, 0, -156, 0, -66);
+    c.fillStyle = '#4b2e17'; c.fillRect(-120, -62, 240, 6);
+    c.fillStyle = '#c9a227'; c.fillRect(-6, -63, 12, 8);
+    c.restore();
+  }
+  // arms
+  const sx = tw * .9;
+  drawArm(c, -sx, -142, -sx - 12, -84, o, -1);
+  if (o.wave) drawArm(c, sx, -142, sx + 30, -200 + Math.sin(time * 8) * 6, o, 1);
+  else drawArm(c, sx, -142, sx + 12, -84, o, 1);
+  if (o.clipboard) {
+    c.fillStyle = '#8a5a2b'; rr(c, sx - 6, -118, 26, 34, 3); c.fill();
+    c.fillStyle = '#fff'; c.fillRect(sx - 2, -112, 18, 24);
+  }
+
+  // head
+  c.fillStyle = o.skin;
+  c.fillRect(-11, -162, 22, 16);
+  c.beginPath(); c.arc(0, -178, 24, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(-24, -177, 6, 0, Math.PI * 2); c.arc(24, -177, 6, 0, Math.PI * 2); c.fill();
+  if (o.beard) {
+    c.fillStyle = o.beardColor;
+    c.beginPath(); c.moveTo(-24, -182);
+    c.quadraticCurveTo(-28, -146, 0, -140);
+    c.quadraticCurveTo(28, -146, 24, -182);
+    c.lineTo(17, -176); c.quadraticCurveTo(0, -150, -17, -176); c.closePath(); c.fill();
+  }
+  // eyes / brows
+  c.fillStyle = '#111';
+  c.beginPath(); c.arc(-8, -183, 2.8, 0, Math.PI * 2); c.arc(8, -183, 2.8, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = o.beard ? o.beardColor : '#3b2a1a'; c.lineWidth = 3; c.lineCap = 'round';
+  if (o.mood === 'mad') { line(c, -13, -193, -4, -189); line(c, 13, -193, 4, -189); }
+  else if (o.mood === 'shock') { line(c, -13, -193, -4, -195); line(c, 13, -193, 4, -195); }
+  else { line(c, -13, -190, -4, -191); line(c, 13, -190, 4, -191); }
+  c.fillStyle = 'rgba(160,80,50,.45)'; c.beginPath(); c.arc(0, -175, 4.5, 0, Math.PI * 2); c.fill();
+  // mouth
+  c.strokeStyle = '#3a1a10'; c.fillStyle = '#3a1a10'; c.lineWidth = 2.6;
+  if (o.mood === 'shock') { c.beginPath(); c.ellipse(0, -162, 4.5, 6, 0, 0, Math.PI * 2); c.fill(); }
+  else if (o.mood === 'mad') { c.beginPath(); c.arc(0, -156, 7, 1.2 * Math.PI, 1.8 * Math.PI); c.stroke(); }
+  else { c.beginPath(); c.arc(0, -168, 8, .15 * Math.PI, .85 * Math.PI); c.stroke(); }
+  if (o.beard || o.mustache) {
+    c.fillStyle = o.beardColor; c.beginPath(); c.ellipse(0, -169, 11, 4, 0, 0, Math.PI * 2); c.fill();
+  }
+  // hat
+  if (o.hat === 'cap') {
+    c.fillStyle = o.hatColor; c.beginPath(); c.arc(0, -188, 25, Math.PI, 0); c.closePath(); c.fill();
+    c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(0, -188, 31, 6, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = o.hatColor; c.beginPath(); c.ellipse(0, -189, 30, 5, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#f5d90a'; c.beginPath(); c.arc(0, -202, 6, 0, Math.PI * 2); c.fill();
+    c.fillStyle = o.hatColor; c.beginPath(); c.arc(0, -202, 2.5, 0, Math.PI * 2); c.fill();
+  } else if (o.hat === 'hardhat') {
+    c.fillStyle = o.hatColor; c.beginPath(); c.arc(0, -190, 27, Math.PI, 0); c.closePath(); c.fill();
+    c.beginPath(); c.ellipse(0, -190, 37, 6, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#ccc'; c.lineWidth = 3; line(c, 0, -216, 0, -192);
+  } else if (o.hat === 'headset') {
+    c.fillStyle = o.hair; c.beginPath(); c.arc(0, -182, 25, Math.PI, 0); c.closePath(); c.fill();
+    c.strokeStyle = '#222'; c.lineWidth = 4; c.beginPath(); c.arc(0, -180, 28, Math.PI, 0); c.stroke();
+    c.fillStyle = '#222'; c.beginPath(); c.arc(-27, -178, 7, 0, Math.PI * 2); c.arc(27, -178, 7, 0, Math.PI * 2); c.fill();
+    c.lineWidth = 2.5; line(c, 27, -172, 12, -160);
+    c.beginPath(); c.arc(11, -160, 3, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
+}
+
+/* ---------------- dialog ---------------- */
+const pc = $('portrait').getContext('2d');
+const NAMES = { foreman: 'Foreman Rick', dispatch: 'Dispatch', tow: 'Tow Driver Dwayne' };
+function speakerName(who) { return who === 'driver' ? S.name : NAMES[who]; }
+function drawPortrait(who, mood) {
+  pc.clearRect(0, 0, 110, 110);
+  const bg = { driver: '#9fd3ef', foreman: '#f3c89b', dispatch: '#b9e4c4', tow: '#f0b1a8' }[who] || '#9fd3ef';
+  pc.fillStyle = bg; pc.fillRect(0, 0, 110, 110);
+  drawPerson(pc, 55, 215, 1.0, Object.assign({}, CAST[who], { mood }));
+}
+function say(text, mood = 'happy', who = 'driver') {
+  $('speaker').textContent = speakerName(who);
+  $('text').textContent = text;
+  drawPortrait(who, mood);
+  if (who === 'driver') S.mood = mood;
+}
+
+/* ---------------- state / scoring ---------------- */
+let S = {};
+let popups = [], particles = [];
+let shake = 0, fade = 0, fadeText = '';
+function newGame(name) {
+  S = { name: name || 'Not anyone from 788', score: 0, log: [], mood: 'happy', map: 'flat' };
+  popups = []; particles = [];
+  updateHUD();
+}
+function award(pts, msg, mood, who = 'driver') {
+  S.score += pts;
+  if (pts < 0) sceneMistakes++;
+  S.log.push({ pts, msg });
+  popups.push({ text: (pts > 0 ? '+' : '') + pts, color: pts >= 0 ? '#63d17a' : '#ff6b6b', t: 0, n: popups.length });
+  if (pts > 0) sfx.good(); else if (pts < 0) { sfx.bad(); shake = Math.max(shake, 8); }
+  say(msg, mood || (pts >= 0 ? 'happy' : 'mad'), who);
+  updateHUD();
+}
+function updateHUD() { $('score').textContent = S.score + ' pts'; }
+function getBest() { try { return parseInt(localStorage.getItem('rr_best') || '0', 10) || 0; } catch (e) { return 0; } }
+function setBest(v) { try { localStorage.setItem('rr_best', String(v)); } catch (e) {} }
+let sceneMistakes = 0;
+function setPhase(t) { $('phase').textContent = t; }
+
+/* ---------------- controls / input ---------------- */
+const input = { gas: false, brake: false };
+const held = {};
+function clearInput() { input.gas = input.brake = false; for (const k in held) held[k] = false; engineStop(); }
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function btn(label, fn, cls = '') {
+  const b = el('button', 'b ' + cls, label);
+  b.onclick = e => { e.preventDefault(); b.blur(); sfx.click(); fn(b); };
+  return b;
+}
+// a button you press and hold. `start` may return false to refuse.
+function holdBtn(label, key, start, cls = '', target = held) {
+  return bindHold(el('button', 'b hold ' + cls, label), key, start, target);
+}
+function bindHold(b, key, start, target = held) {
+  const down = e => {
+    e.preventDefault();
+    if (start && start() === false) return;
+    try { b.setPointerCapture(e.pointerId); } catch (_) {}
+    target[key] = true; b.classList.add('held');
+  };
+  const up = () => { target[key] = false; b.classList.remove('held'); };
+  b.addEventListener('pointerdown', down);
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+  b.addEventListener('lostpointercapture', up);
+  b.addEventListener('contextmenu', e => e.preventDefault());
+  return b;
+}
+function group(title, ...kids) {
+  const g = el('div', 'group'); if (title) g.appendChild(el('h4', '', title));
+  const r = el('div', 'row'); kids.forEach(k => k && r.appendChild(k)); g.appendChild(r);
+  return g;
+}
+// layout: 'full' (just the game), 'side' (game + control panel), 'drive' (game + pedals)
+function setLayout(mode) {
+  if (document.body.dataset.mode === mode) return;
+  document.body.dataset.mode = mode;
+  document.body.classList.remove('full', 'side', 'drive');
+  document.body.classList.add(mode);
+  input.gas = input.brake = false;
+  resize();
+}
+function setControls(...groups) {
+  setLayout('side');
+  const c = $('controls'); c.innerHTML = '';
+  groups.forEach(g => g && c.appendChild(g));
+}
+function clearControls() { $('controls').innerHTML = ''; }
+const KEYS = { ArrowRight: 'gas', KeyD: 'gas', ArrowUp: 'gas', KeyW: 'gas', Space: 'gas',
+               ArrowLeft: 'brake', KeyA: 'brake', ArrowDown: 'brake', KeyS: 'brake' };
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (KEYS[e.code] && scene && scene.driving && scene.driving()) {
+    input[KEYS[e.code]] = true; e.preventDefault();
+    $(KEYS[e.code] === 'gas' ? 'gasP' : 'brakeP').classList.add('held');
+  }
+  if (e.code === 'KeyH' && scene && scene.driving && scene.driving()) honk();
+});
+addEventListener('keyup', e => {
+  if (KEYS[e.code]) { input[KEYS[e.code]] = false; $(KEYS[e.code] === 'gas' ? 'gasP' : 'brakeP').classList.remove('held'); }
+});
+addEventListener('blur', clearInput);
+
+/* ---------------- scene manager ---------------- */
+let scene = null, sceneId = 0;
+function go(name) {
+  sceneId++; clearInput(); engineStop();
+  $('overlay').className = ''; $('overlay').innerHTML = '';
+  $('clip').className = ''; $('next').className = '';
+  clearControls();
+  scene = scenes[name]; scene.enter();
+}
+function later(ms, fn) { const id = sceneId; setTimeout(() => { if (id === sceneId) fn(); }, ms); }
+
+/* ============================================================
+   THE ROLLBACK TRUCK
+   ============================================================ */
+const MAXANG = 0.30, FRONT0 = 175, BEDLEN = 210, PIVX = 40, PIVH = 50;
+const SLIDEMAX = PIVH / Math.sin(MAXANG) - (BEDLEN - FRONT0);   // bed tail touches ground
+const GEN_OFF = 170;                                             // winch travel to get generator off
+
+function bedToWorld(x0, gy, st, u, v) {
+  const th = (st.tilt || 0) * MAXANG;
+  return [x0 + PIVX + u * Math.cos(th) + v * Math.sin(th), gy - PIVH - u * Math.sin(th) + v * Math.cos(th)];
+}
+function wheel(c, x, y, rot) {
+  c.fillStyle = '#161616'; c.beginPath(); c.arc(x, y, 20, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#9aa0a6'; c.beginPath(); c.arc(x, y, 9, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#555'; c.lineWidth = 2.5;
+  for (let i = 0; i < 3; i++) { const a = rot + i * Math.PI * 2 / 3; line(c, x, y, x + Math.cos(a) * 9, y + Math.sin(a) * 9); }
+}
+// long: draws a bigger "long load" generator (with DOT warning flags on each end)
+// used by the angle-job map, and requiring extra winch travel to fully clear the bed
+function drawGenerator(c, cx, by, long) {
+  const hw = long ? 60 : 40, k = hw / 40;
+  c.fillStyle = '#2b2b2b'; c.fillRect(cx - hw - 3, by - 6, hw * 2 + 6, 6);
+  c.fillStyle = '#d6dadd'; rr(c, cx - hw, by - 52, hw * 2, 47, 4); c.fill();
+  c.strokeStyle = '#555'; c.lineWidth = 2; rr(c, cx - hw, by - 52, hw * 2, 47, 4); c.stroke();
+  c.strokeStyle = '#7b8288'; c.lineWidth = 2;
+  for (let i = 0; i < 5; i++) { const gx2 = cx + (-32 + i * 6) * k; line(c, gx2, by - 44, gx2, by - 16); }
+  c.fillStyle = '#1f7a3a'; c.fillRect(cx - hw, by - 30, hw * 2, 6);
+  c.fillStyle = '#222'; c.fillRect(cx + 4 * k, by - 46, 26, 12);
+  c.fillStyle = '#63d17a'; c.fillRect(cx + 7 * k, by - 43, 5, 5);
+  c.fillStyle = '#333'; c.fillRect(cx + 26 * k, by - 62, 6, 11);
+  c.strokeStyle = '#444'; c.lineWidth = 3; c.beginPath(); c.arc(cx - 10 * k, by - 56, 4, Math.PI, 0); c.stroke();
+  c.fillStyle = '#111'; c.font = 'bold 9px system-ui,sans-serif'; c.textAlign = 'center';
+  c.fillText(long ? 'LONG GENERATOR' : 'GENERATOR', cx - 4, by - 9);
+  if (long) {
+    c.fillStyle = '#e0453f';
+    c.beginPath(); c.moveTo(cx + hw, by - 50); c.lineTo(cx + hw, by - 61); c.lineTo(cx + hw + 9, by - 55); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(cx - hw, by - 50); c.lineTo(cx - hw, by - 61); c.lineTo(cx - hw - 9, by - 55); c.closePath(); c.fill();
+    c.strokeStyle = '#333'; c.lineWidth = 1.4;
+    line(c, cx + hw, by - 50, cx + hw, by - 61); line(c, cx - hw, by - 50, cx - hw, by - 61);
+    c.fillStyle = '#fff'; c.font = 'bold 7px system-ui,sans-serif'; c.fillText('OVERSIZE LOAD', cx - 4, by - 65);
+  }
+}
+function drawSunburst(c, cx, cy, r) {
+  c.save(); c.translate(cx, cy);
+  c.fillStyle = '#f5d90a';
+  c.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a1 = i * Math.PI / 4, a2 = a1 + Math.PI / 8;
+    c.lineTo(Math.cos(a1) * r * 1.9, Math.sin(a1) * r * 1.9);
+    c.lineTo(Math.cos(a2) * r * .9, Math.sin(a2) * r * .9);
+  }
+  c.closePath(); c.fill();
+  c.fillStyle = '#39a24a'; c.beginPath(); c.arc(0, 0, r * .55, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+// st: tilt, slide, gen ('bed'|'ground'|'none'), genPos, genX, genTilted, chains, cable,
+//     cabColor, trim, wheel, hazards, beacon, cargo, driverInCab
+function drawRollback(c, x0, gy, st) {
+  const th = (st.tilt || 0) * MAXANG, slide = st.slide || 0;
+  const cab = st.cabColor || '#39a24a', trim = st.trim || '#161616';
+  const blink = Math.floor(time * 3) % 2 === 0;
+
+  // bed (behind cab)
+  c.save(); c.translate(x0 + PIVX, gy - PIVH); c.rotate(-th);
+  const front = FRONT0 - slide, rear = front - BEDLEN;
+  c.fillStyle = '#23272b'; c.fillRect(rear + 20, 0, BEDLEN - 40, 8);
+  c.fillStyle = '#3d4247'; c.fillRect(rear, -12, BEDLEN, 12);
+  c.fillStyle = '#f2c200'; c.fillRect(rear, -14, BEDLEN, 3);
+  c.fillStyle = '#ff4d2e'; c.fillRect(rear - 2, -12, 5, 8);
+  c.fillStyle = '#555b61'; c.fillRect(front - 9, -62, 9, 50);
+  c.strokeStyle = '#555b61'; c.lineWidth = 3;
+  for (let i = 1; i < 4; i++) line(c, front - 9, -12 - i * 12, front - 30, -12 - i * 12);
+  c.fillStyle = '#2b2b2b'; c.beginPath(); c.arc(front - 18, -20, 7, 0, Math.PI * 2); c.fill();
+  if (st.gen === 'bed') {
+    const hw = st.genLong ? 60 : 40;
+    const gx = front - 45 - (st.genPos || 0) + (st.swingX || 0);
+    drawGenerator(c, gx, -12, st.genLong);
+    if (st.cable !== false) { c.strokeStyle = '#111'; c.lineWidth = 2; line(c, front - 18, -20, gx + hw, -26); }
+    if (st.chains) {
+      c.strokeStyle = '#8c8c8c'; c.lineWidth = 3; c.setLineDash([4, 3]);
+      line(c, gx - hw * .95, -40, gx - hw * 1.55, -12); line(c, gx + hw * .95, -40, gx + hw * 1.45, -12);
+      c.setLineDash([]);
+    }
+  }
+  if (st.cargo) {
+    c.save(); c.translate(rear + 8, -12); c.scale(.62, .62);
+    drawRollback(c, 0, 0, { gen: 'none', wheel: 0, smoke: false, hazards: st.hazards });
+    c.restore();
+    c.strokeStyle = '#8c8c8c'; c.lineWidth = 3; c.setLineDash([4, 3]);
+    line(c, rear + 28, -18, rear + 12, -12); line(c, rear + 190, -18, rear + 205, -12);
+    c.setLineDash([]);
+  }
+  c.restore();
+
+  // hydraulic ram
+  const [hx, hy] = bedToWorld(x0, gy, st, 105, 0);
+  c.strokeStyle = '#b8bec4'; c.lineWidth = 7; line(c, x0 + 170, gy - 40, hx, hy);
+  c.strokeStyle = '#6d747a'; c.lineWidth = 9; line(c, x0 + 170, gy - 40, (x0 + 170 + hx) / 2, (gy - 40 + hy) / 2);
+
+  // chassis
+  c.fillStyle = '#2b2b2b'; c.fillRect(x0 + 18, gy - 48, 300, 12);
+  c.fillStyle = '#1b1b1b'; c.fillRect(x0 + 50, gy - 44, 90, 14);
+
+  // cab
+  c.fillStyle = '#9aa0a6'; c.fillRect(x0 + 206, gy - 146, 7, 96);
+  c.fillStyle = cab; rr(c, x0 + 214, gy - 130, 74, 92, 8); c.fill();
+  rr(c, x0 + 270, gy - 94, 54, 56, 8); c.fill();
+  c.fillStyle = '#8fc9e6'; rr(c, x0 + 250, gy - 122, 32, 30, 4); c.fill();
+  c.fillStyle = '#6fa9c6'; rr(c, x0 + 220, gy - 122, 26, 30, 4); c.fill();
+  if (st.driverInCab) {
+    c.fillStyle = '#e0ac7e'; c.beginPath(); c.arc(x0 + 265, gy - 102, 9, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#5b3a21'; c.beginPath(); c.arc(x0 + 265, gy - 99, 9, 0.1, Math.PI - 0.1); c.fill();
+    c.fillStyle = '#1f5f2f'; c.beginPath(); c.arc(x0 + 265, gy - 106, 9.5, Math.PI, 0); c.fill();
+    c.fillRect(x0 + 265, gy - 108, 14, 3);
+  }
+  drawSunburst(c, x0 + 232, gy - 108, 9);
+  c.fillStyle = trim; c.fillRect(x0 + 214, gy - 76, 110, 15);
+  c.fillStyle = '#f5d90a'; c.fillRect(x0 + 214, gy - 61, 110, 3);
+  c.fillStyle = '#fff'; c.font = 'bold 9px system-ui,sans-serif'; c.textAlign = 'center';
+  c.fillText('SUNBELT', x0 + 249, gy - 68);
+  c.font = 'bold 6px system-ui,sans-serif'; c.fillText('RENTALS', x0 + 249, gy - 61);
+  c.strokeStyle = 'rgba(0,0,0,.25)'; c.lineWidth = 1.5; rr(c, x0 + 218, gy - 124, 50, 84, 5); c.stroke();
+  c.fillStyle = '#777'; c.fillRect(x0 + 320, gy - 90, 6, 40);
+  c.fillStyle = '#ddd'; c.fillRect(x0 + 312, gy - 52, 18, 12);
+  c.fillStyle = '#ffe98a'; c.beginPath(); c.arc(x0 + 318, gy - 80, 5, 0, Math.PI * 2); c.fill();
+  // roof beacon
+  c.fillStyle = st.beacon && blink ? '#ffae00' : '#a86a00';
+  rr(c, x0 + 238, gy - 138, 22, 8, 3); c.fill();
+  if (st.beacon && blink) { c.fillStyle = 'rgba(255,174,0,.25)'; c.beginPath(); c.arc(x0 + 249, gy - 134, 22, 0, Math.PI * 2); c.fill(); }
+  // hazards
+  if (st.hazards && blink) {
+    c.fillStyle = '#ff9d00';
+    c.beginPath(); c.arc(x0 + 324, gy - 64, 6, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(x0 + 20, gy - 44, 6, 0, Math.PI * 2); c.fill();
+  }
+
+  // wheels
+  const rot = st.wheel || 0;
+  wheel(c, x0 + 70, gy - 20, rot); wheel(c, x0 + 116, gy - 20, rot); wheel(c, x0 + 276, gy - 20, rot);
+
+  // generator on the ground
+  if (st.gen === 'ground') {
+    c.save(); c.translate(st.genX, gy);
+    if (st.genTilted) c.rotate(-0.12);
+    drawGenerator(c, 0, 0, st.genLong);
+    c.restore();
+    if (st.cable !== false) {
+      const [wx, wy] = bedToWorld(x0, gy, st, FRONT0 - slide - 18, -20);
+      c.strokeStyle = '#111'; c.lineWidth = 2; line(c, wx, wy, st.genX + (st.genLong ? 60 : 40), gy - 26);
+    }
+  }
+}
+function drawTowRig(c, front, gy, st) {
+  const sc = 1.3, x0 = front - 326 * sc;
+  c.save(); c.translate(x0, gy); c.scale(sc, sc);
+  drawRollback(c, 0, 0, Object.assign({ cabColor: '#c0392b', trim: '#222', gen: 'none', cargo: true }, st));
+  c.restore();
+}
+
+/* ============================================================
+   WORLD / ROAD RENDERING
+   ============================================================ */
+function drawSky() {
+  const top = 540 - H;
+  const g = ctx.createLinearGradient(0, top, 0, GROUND);
+  g.addColorStop(0, '#4aa6de'); g.addColorStop(1, '#cfeaf7');
+  ctx.fillStyle = g; ctx.fillRect(0, top, W, GROUND - top);
+  ctx.fillStyle = '#fff3a8'; ctx.beginPath(); ctx.arc(820, 80, 38, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,243,168,.25)'; ctx.beginPath(); ctx.arc(820, 80, 58, 0, Math.PI * 2); ctx.fill();
+}
+function drawBackdrop(camX) {
+  // far hills
+  ctx.fillStyle = '#b9cf9a';
+  ctx.beginPath(); ctx.moveTo(0, GROUND);
+  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, GROUND - 80 - Math.sin((x + camX * .15) / 130) * 30 - Math.sin((x + camX * .15) / 57) * 10);
+  ctx.lineTo(W, GROUND); ctx.fill();
+  // clouds
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  for (let i = -1; i < 6; i++) {
+    const span = W + 400, cx = ((i * 260 - camX * .05) % span + span) % span - 150, cy = 60 + hash(i) * 70;
+    ctx.beginPath(); ctx.arc(cx, cy, 22, 0, 7); ctx.arc(cx + 24, cy - 8, 26, 0, 7); ctx.arc(cx + 50, cy, 20, 0, 7); ctx.fill();
+  }
+  // mid: palms & cacti
+  const p = .5, sp = 230, start = Math.floor(camX * p / sp) - 1;
+  for (let i = start; i < start + 7; i++) {
+    const x = i * sp - camX * p + hash(i) * 80, h = hash(i + 9);
+    if (h < .4) palm(x, GROUND - 22); else if (h < .75) cactus(x, GROUND - 22);
+  }
+  ctx.fillStyle = '#8fbf6a'; ctx.fillRect(0, GROUND - 24, W, 16);
+}
+function palm(x, y) {
+  ctx.strokeStyle = '#8a6a44'; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + 12, y - 60, x + 6, y - 110); ctx.stroke();
+  ctx.strokeStyle = '#3f8f3a'; ctx.lineWidth = 6;
+  for (let a = 0; a < 6; a++) {
+    const ang = -Math.PI + a * Math.PI / 5;
+    ctx.beginPath(); ctx.moveTo(x + 6, y - 110);
+    ctx.quadraticCurveTo(x + 6 + Math.cos(ang) * 30, y - 125 + Math.sin(ang) * 10, x + 6 + Math.cos(ang) * 50, y - 95 + Math.sin(ang) * 5);
+    ctx.stroke();
+  }
+}
+function cactus(x, y) {
+  ctx.fillStyle = '#4f8f46';
+  rr(ctx, x - 8, y - 70, 16, 70, 8); ctx.fill();
+  rr(ctx, x - 26, y - 50, 12, 28, 6); ctx.fill(); ctx.fillRect(x - 26, y - 28, 20, 9);
+  rr(ctx, x + 14, y - 58, 12, 30, 6); ctx.fill(); ctx.fillRect(x + 6, y - 36, 20, 9);
+}
+function drawRoad(camX) {
+  ctx.fillStyle = '#4a4d52'; ctx.fillRect(0, GROUND - 8, W, 62);
+  ctx.fillStyle = '#d8d8d8'; ctx.fillRect(0, GROUND - 8, W, 3);
+  ctx.fillStyle = '#f5d90a';
+  const off = ((camX % 80) + 80) % 80;
+  for (let x = -off; x < W; x += 80) ctx.fillRect(x, GROUND + 28, 44, 4);
+  ctx.fillStyle = '#7aa35a'; ctx.fillRect(0, GROUND + 54, W, H - GROUND - 54);
+  ctx.fillStyle = '#6a9350';
+  for (let i = 0; i < 40; i++) { const x = ((i * 53 - camX) % W + W) % W; ctx.fillRect(x, GROUND + 62 + (i % 3) * 7, 3, 6); }
+}
+function drawJobsite(sx) {
+  // fence
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 3;
+  for (let x = sx - 230; x <= sx + 250; x += 40) line(ctx, x, GROUND - 90, x, GROUND - 16);
+  ctx.strokeStyle = 'rgba(140,140,140,.55)'; ctx.lineWidth = 1;
+  for (let x = sx - 230; x < sx + 250; x += 10) { line(ctx, x, GROUND - 88, x + 10, GROUND - 18); line(ctx, x + 10, GROUND - 88, x, GROUND - 18); }
+  ctx.fillStyle = '#ff7a1a'; ctx.fillRect(sx - 230, GROUND - 92, 480, 5);
+  // dirt pile
+  ctx.fillStyle = '#a07a4d'; ctx.beginPath(); ctx.ellipse(sx - 150, GROUND - 16, 70, 40, 0, Math.PI, 0); ctx.fill();
+  // porta-john
+  ctx.fillStyle = '#2f7fd1'; rr(ctx, sx + 170, GROUND - 106, 44, 92, 6); ctx.fill();
+  ctx.fillStyle = '#1f5fa0'; ctx.fillRect(sx + 176, GROUND - 96, 32, 78);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 8px system-ui,sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('OCCUPIED', sx + 192, GROUND - 60);
+  // sign
+  ctx.fillStyle = '#6b4a2b'; ctx.fillRect(sx - 4, GROUND - 130, 6, 116);
+  ctx.fillStyle = '#ff7a1a'; rr(ctx, sx - 70, GROUND - 150, 140, 36, 4); ctx.fill();
+  ctx.fillStyle = '#111'; ctx.font = 'bold 13px system-ui,sans-serif';
+  ctx.fillText('JOBSITE', sx, GROUND - 134); ctx.font = 'bold 9px system-ui,sans-serif';
+  ctx.fillText('HARD HATS REQUIRED', sx, GROUND - 121);
+}
+function drawBranch(sx) {
+  ctx.fillStyle = '#e9dfc8'; ctx.fillRect(sx - 170, GROUND - 180, 340, 166);
+  ctx.fillStyle = '#1f7a3a'; ctx.fillRect(sx - 180, GROUND - 196, 360, 22);
+  ctx.fillStyle = '#f5d90a'; ctx.fillRect(sx - 180, GROUND - 176, 360, 5);
+  ctx.fillStyle = '#9aa0a6'; ctx.fillRect(sx - 140, GROUND - 130, 120, 116);
+  ctx.strokeStyle = '#7d848a'; ctx.lineWidth = 2;
+  for (let y = GROUND - 125; y < GROUND - 14; y += 10) line(ctx, sx - 140, y, sx - 20, y);
+  ctx.fillStyle = '#8fc9e6'; ctx.fillRect(sx + 20, GROUND - 130, 60, 40); ctx.fillRect(sx + 95, GROUND - 130, 50, 40);
+  ctx.fillStyle = '#5a4a3a'; ctx.fillRect(sx + 100, GROUND - 80, 36, 66);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px system-ui,sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('SUNBELT BRANCH', sx, GROUND - 180);
+  // yard toys
+  ctx.fillStyle = '#f5d90a'; ctx.fillRect(sx + 190, GROUND - 60, 60, 44); ctx.fillStyle = '#333'; ctx.fillRect(sx + 196, GROUND - 90, 48, 6);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 3; line(ctx, sx + 200, GROUND - 60, sx + 240, GROUND - 86); line(ctx, sx + 240, GROUND - 60, sx + 200, GROUND - 86);
+}
+function drawPole(x, y) {
+  ctx.fillStyle = '#6b4a2b'; ctx.fillRect(x - 5, y - 90, 10, 90);
+  ctx.strokeStyle = '#4a3319'; ctx.lineWidth = 2; line(ctx, x - 18, y - 70, x + 18, y - 70);
+  ctx.fillStyle = '#333'; ctx.fillRect(x - 3, y - 96, 6, 8);
+}
+function drawCone(x, y, s = 1) {
+  ctx.fillStyle = '#ff6a00';
+  ctx.beginPath(); ctx.moveTo(x - 9 * s, y); ctx.lineTo(x, y - 26 * s); ctx.lineTo(x + 9 * s, y); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.fillRect(x - 5 * s, y - 14 * s, 10 * s, 4 * s);
+  ctx.fillStyle = '#333'; ctx.fillRect(x - 12 * s, y - 2, 24 * s, 3);
+}
+function drawSign(x, color, lines, shape) {
+  ctx.fillStyle = '#777'; ctx.fillRect(x - 2, GROUND - 120, 5, 108);
+  ctx.fillStyle = color;
+  if (shape === 'oct') {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; ctx.lineTo(x + Math.cos(a) * 28, GROUND - 140 + Math.sin(a) * 28); }
+    ctx.fill();
+  } else if (shape === 'diamond') {
+    ctx.beginPath(); ctx.moveTo(x, GROUND - 175); ctx.lineTo(x + 34, GROUND - 141); ctx.lineTo(x, GROUND - 107); ctx.lineTo(x - 34, GROUND - 141); ctx.fill();
+  } else { rr(ctx, x - 26, GROUND - 172, 52, 62, 4); ctx.fill(); ctx.strokeStyle = '#111'; ctx.lineWidth = 2; rr(ctx, x - 23, GROUND - 169, 46, 56, 3); ctx.stroke(); }
+  ctx.fillStyle = shape === 'oct' ? '#fff' : '#111'; ctx.textAlign = 'center';
+  lines.forEach((l, i) => { ctx.font = `bold ${l[1]}px system-ui,sans-serif`; ctx.fillText(l[0], x, GROUND + l[2]); });
+}
+function drawArmadillo(x, y, s, angry, rot = 0) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.fillStyle = '#9a8a78';
+  ctx.beginPath(); ctx.moveTo(-26, -6); ctx.lineTo(-40, -2); ctx.lineTo(-26, -2); ctx.fill();
+  ctx.fillStyle = '#b3a38e'; ctx.beginPath(); ctx.ellipse(0, -12, 26, 16, 0, Math.PI, 0); ctx.fill();
+  ctx.strokeStyle = '#7d6e5d'; ctx.lineWidth = 2;
+  for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * 8, -27); ctx.lineTo(i * 9, -12); ctx.stroke(); }
+  ctx.fillStyle = '#c2ae95'; ctx.beginPath(); ctx.ellipse(28, -10, 10, 7, .2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(24, -19, 3, 6, -.3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(30, -12, 1.8, 0, 7); ctx.fill();
+  if (angry) { ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; line(ctx, 27, -16, 33, -14); }
+  ctx.fillStyle = '#8a7a66'; ctx.fillRect(-16, -12, 6, 10); ctx.fillRect(10, -12, 6, 10);
+  ctx.restore();
+}
+function drawTriangle(x) {
+  ctx.strokeStyle = '#e02020'; ctx.lineWidth = 4; ctx.fillStyle = 'rgba(255,120,0,.35)';
+  ctx.beginPath(); ctx.moveTo(x - 12, GROUND + 6); ctx.lineTo(x, GROUND - 16); ctx.lineTo(x + 12, GROUND + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+
+/* particles & popups */
+function puff(x, y, color, n = 1, spread = 1) {
+  for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - .5) * 30 * spread, vy: -20 - Math.random() * 30, life: 1.6, r: 6 + Math.random() * 8, color });
+}
+const CONFETTI_COLORS = ['#f5d90a', '#39a24a', '#e0453f', '#3aa0e0', '#fff'];
+function confetti(n = 40) {
+  for (let i = 0; i < n; i++) particles.push({
+    x: Math.random() * W, y: -20 - Math.random() * 120, vx: (Math.random() - .5) * 70,
+    vy: 20 + Math.random() * 40, grav: 55, spin: (Math.random() - .5) * 12, ang: Math.random() * 7,
+    life: 2.6 + Math.random() * 1.4, r: 5 + Math.random() * 4, color: CONFETTI_COLORS[i % CONFETTI_COLORS.length], sq: true
+  });
+}
+function updateParticles(dt) {
+  particles.forEach(p => {
+    if (p.grav) p.vy += p.grav * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.spin) p.ang += p.spin * dt; else p.r += 10 * dt;
+    p.life -= dt;
+  });
+  particles = particles.filter(p => p.life > 0 && p.y < H + 60);
+  popups.forEach(p => p.t += dt); popups = popups.filter(p => p.t < 1.8);
+}
+function drawParticles(camX) {
+  particles.forEach(p => {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 1.6)) * .9;
+    ctx.fillStyle = p.color;
+    if (p.sq) { ctx.save(); ctx.translate(p.x - camX, p.y); ctx.rotate(p.ang); ctx.fillRect(-p.r, -p.r * .6, p.r * 2, p.r * 1.2); ctx.restore(); }
+    else { ctx.beginPath(); ctx.arc(p.x - camX, p.y, p.r, 0, 7); ctx.fill(); }
+  });
+  ctx.globalAlpha = 1;
+}
+function drawPopups() {
+  popups.forEach((p, i) => {
+    ctx.globalAlpha = 1 - p.t / 1.8;
+    ctx.font = 'bold 42px system-ui,sans-serif'; ctx.textAlign = 'center';
+    const y = H * .42 - p.t * 50 + (i % 3) * 8;
+    ctx.lineWidth = 6; ctx.strokeStyle = '#111'; ctx.strokeText(p.text, W / 2, y);
+    ctx.fillStyle = p.color; ctx.fillText(p.text, W / 2, y);
+  });
+  ctx.globalAlpha = 1;
+}
+function drawSpeedo(v, limit) {
+  const mph = Math.round(v / 6);
+  const x = W / 2 + 6, y = 470;
+  ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, x, y, 130, 62, 10); ctx.fill();
+  ctx.fillStyle = limit && mph > limit + 3 ? '#ff6b6b' : '#fff';
+  ctx.font = 'bold 34px system-ui,sans-serif'; ctx.textAlign = 'right'; ctx.fillText(mph, x + 76, y + 42);
+  ctx.font = 'bold 12px system-ui,sans-serif'; ctx.fillStyle = '#aaa'; ctx.fillText('MPH', x + 116, y + 42);
+  if (limit) { ctx.fillStyle = '#f5d90a'; ctx.font = 'bold 11px system-ui,sans-serif'; ctx.fillText('LIMIT ' + limit, x + 116, y + 56); }
+}
+function drawProgress(p, label) {
+  const x = W / 2 - 196, y = 470, w = 190;
+  ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, x, y, w, 62, 10); ctx.fill();
+  ctx.fillStyle = '#444'; ctx.fillRect(x + 12, y + 38, w - 24, 8);
+  ctx.fillStyle = '#f5d90a'; ctx.fillRect(x + 12, y + 38, (w - 24) * clamp(p, 0, 1), 8);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 15px system-ui,sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('To the ' + label.toLowerCase(), x + 12, y + 26);
+}
+function drawFade() {
+  if (fade <= 0) return;
+  ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(0, 0, W, H);
+  if (fadeText) {
+    ctx.globalAlpha = fade; ctx.fillStyle = '#f5d90a'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(fadeText, W / 2, H / 2); ctx.globalAlpha = 1;
+  }
+}
+
+/* ============================================================
+   DRIVING (shared by both trips)
+   ============================================================ */
+const VMAX = 480;       // px/s  (=80 mph) — bumped up, this game is supposed to be fun
+function honk() {
+  sfx.horn();
+  const lines = ['HOOOONK! Nobody moved, but I feel better.', 'HONK HONK! That one was for the guy in the Prius.',
+    'BEEEP! A cow in a field looked up. Respect.', 'HONK! The horn is the loudest thing on this truck. And me.'];
+  say(lines[Math.floor(Math.random() * lines.length)], 'happy');
+}
+function driveControls() { clearControls(); setLayout('drive'); engineStart(); }
+bindHold($('gasP'), 'gas', null, input);
+bindHold($('brakeP'), 'brake', null, input);
+$('honk').onclick = e => { e.preventDefault(); honk(); };
+function makeWorld(cfg) {
+  return Object.assign({ x: 450, v: 0, wheel: 0, mode: 'driving', events: [], hazards: false, triangles: false, sputter: false }, cfg);
+}
+function driveStep(w, dt) {
+  if (w.mode !== 'driving') { w.v = Math.max(0, w.v - 400 * dt); engineStop(); return; }
+  const gas = input.gas && !w.sputter, brake = input.brake;
+  if (gas) w.v = Math.min(VMAX, w.v + 220 * dt);
+  if (brake) w.v = Math.max(0, w.v - 480 * dt);
+  if (!gas && !brake) w.v = Math.max(0, w.v - 70 * dt);
+  if (brake && w.v > 220 && !w._screeched) { sfx.screech(); w._screeched = true; }
+  else if (!brake || w.v <= 220) w._screeched = false;
+  if (w.sputter) {
+    w.v = Math.max(0, w.v - 110 * dt);
+    if (Math.random() < .5) puff(w.x - 10, GROUND - 90, '#555');
+  }
+  w.x += w.v * dt; w.wheel += w.v * dt / 20;
+  engineUpdate(w.v);
+  w.events.forEach(e => e.update && e.update(w, dt));
+}
+const camOf = w => w.x - W * .62;
+function renderWorld(w, extra = {}) {
+  const camX = camOf(w);
+  drawSky(); drawBackdrop(camX);
+  if (w.sites) w.sites.forEach(s => (s.kind === 'jobsite' ? drawJobsite : drawBranch)(s.x - camX));
+  drawRoad(camX);
+  w.events.forEach(e => e.draw && e.draw(camX, w));
+  if (w.leftGen) drawGenerator(ctx, w.leftGen - camX, GROUND - 16, S.map === 'angle');
+  if (w.triangles) [360, 420, 480].forEach(d => drawTriangle(w.x - d - camX));
+  if (!w.hideTruck) drawRollback(ctx, w.x - 326 - camX, GY, {
+    gen: w.loaded ? 'bed' : 'none', genPos: 0, genLong: S.map === 'angle', chains: true, wheel: w.wheel, hazards: w.hazards,
+    driverInCab: !w.driverOut, beacon: false });
+  if (w.rig) drawTowRig(ctx, w.rig.x - camX, GY, { wheel: w.rig.wheel, hazards: true, driverInCab: true });
+  if (w.driverOut) drawPerson(ctx, w.x + 40 - camX, GROUND + 50, .5, Object.assign({}, CAST.driver, { mood: S.mood }));
+  if (w.towGuy) drawPerson(ctx, w.x + 110 - camX, GROUND + 50, .48, Object.assign({}, CAST.tow, { mood: 'happy', wave: true }));
+  drawParticles(camX);
+  if (!extra.noHud) {
+    drawSpeedo(w.v, w.limit);
+    drawProgress((w.x - w.start) / (w.dest - w.start), w.destLabel);
+  }
+}
+
+/* road events */
+function hintAt(x, text, mood = 'happy') {
+  return { done: false, update(w) { if (!this.done && w.x > x) { this.done = true; say(text, mood); } } };
+}
+function stopSign(x) {
+  return {
+    done: false,
+    update(w) {
+      if (this.done) return;
+      if (w.x >= x - 110 && w.x <= x + 4 && w.v < 6) { this.done = true; award(10, 'Full stop at the stop sign. Somewhere, a driving instructor sheds a single proud tear.'); }
+      else if (w.x > x + 10) { this.done = true; sfx.horn(); award(-15, 'Rolled right through the stop sign! A minivan honked. A kid in it flipped me a juice box.'); }
+    },
+    draw(camX) {
+      ctx.fillStyle = '#fff'; ctx.fillRect(x - camX, GROUND - 6, 8, 58);
+      drawSign(x + 30 - camX, '#c62828', [['STOP', 16, -134]], 'oct');
+    }
+  };
+}
+function workZone(x1, x2, limit = 35) {
+  return {
+    pen: false, done: false,
+    update(w) {
+      w.limit = (w.x > x1 - 150 && w.x < x2) ? limit : 0;
+      if (w.x > x1 && w.x < x2 && Math.round(w.v / 6) > limit + 5 && !this.pen) {
+        this.pen = true; award(-10, 'Speeding through a work zone! A flagger just chucked his hard hat at my windshield.', 'shock');
+      }
+      if (w.x >= x2 && !this.done) {
+        this.done = true;
+        if (!this.pen) award(10, 'Nice and slow through the work zone. The crew waved. One of them waved with all five fingers!');
+      }
+    },
+    draw(camX) {
+      drawSign(x1 - 250 - camX, '#ff8c1a', [['ROAD', 11, -146], ['WORK', 11, -133]], 'diamond');
+      drawSign(x1 - 60 - camX, '#fff', [['SPEED', 10, -155], ['LIMIT', 10, -143], [String(limit), 22, -120]]);
+      for (let cx = x1; cx < x2; cx += 70) drawCone(cx - camX, GROUND - 4, .9);
+      const wx = (x1 + x2) / 2 - camX;
+      drawPerson(ctx, wx, GROUND - 14, .38, { vest: '#ff7a1a', shirt: '#777', hat: 'hardhat', hatColor: '#f5d90a', beard: false, girth: .9, pants: '#555', skin: '#a8714a', wave: true });
+    }
+  };
+}
+function armadillo(x) {
+  return {
+    state: 'wait', t: 0, bx: 0, by: 0,
+    update(w, dt) {
+      if (this.state === 'wait') {
+        if (w.x >= x - 260 && w.x < x - 5 && w.v < 6) { this.state = 'leave'; award(10, 'I stopped for Armando the armadillo. He nodded at me respectfully and moseyed off.'); }
+        else if (w.x >= x - 5) { this.state = 'bonk'; award(-10, 'BONK! I clipped Armando the armadillo. He\'s fine — he bounced into the ditch VERY offended.', 'shock'); }
+      } else this.t += dt;
+    },
+    draw(camX) {
+      if (this.state === 'wait') drawArmadillo(x - camX, GROUND + 20, 1, false);
+      else if (this.state === 'leave') { if (this.t < 2.5) drawArmadillo(x - camX + this.t * 20, GROUND + 20 + this.t * 20, 1 + this.t * .1, false); }
+      else {
+        const t = Math.min(this.t, 1);
+        drawArmadillo(x - camX + 60 + t * 120, GROUND + 70 - Math.sin(t * Math.PI) * 120, 1, true, t * 6.28);
+      }
+    }
+  };
+}
+function parkZone(dest, label, onArrive) {
+  return {
+    parked: false,
+    update(w) {
+      if (this.parked) return;
+      if (w.v < 4 && Math.abs(w.x - dest) <= 70) {
+        this.parked = true; w.mode = 'parked'; w.v = 0;
+        award(20, `Parked it at the ${label} like a pro. Right in the box!`);
+        later(1800, onArrive);
+      } else if (w.x > dest + 170 || (w.x > dest + 70 && w.v < 4)) {
+        this.parked = true; w.mode = 'parked'; w.v = 0;
+        award(-5, 'Overshot the spot! BEEP... BEEP... BEEP... (the sound of shame, backing up)', 'shock');
+        [0, 500, 1000].forEach(d => setTimeout(sfx.beep, d));
+        w.x = dest;
+        later(1800, onArrive);
+      }
+    },
+    draw(camX) {
+      if (this.parked) return;
+      ctx.strokeStyle = '#46e06a'; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
+      ctx.strokeRect(dest - 70 - camX, GROUND - 6, 140, 50); ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(70,224,106,.18)'; ctx.fillRect(dest - 70 - camX, GROUND - 6, 140, 50);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('STOP FRONT BUMPER HERE', dest - camX, GROUND + 60);
+    }
+  };
+}
+
+/* ============================================================
+   JOB / MAP SELECT — pick which delivery to run
+   ============================================================ */
+const MAPS = {
+  flat: {
+    id: 'flat', label: 'Flatline Lot', badge: 'easy',
+    blurb: 'A standard generator, straight back-in drop. Good for learning the ropes.',
+    genOff: GEN_OFF, long: false, swing: false, target: 0, tol: 0, tolWide: 0,
+    greet: 'We\'re here. Foreman wants it by the fence. Follow the clipboard and do NOT drop this thing — it costs more than my truck.',
+  },
+  angle: {
+    id: 'angle', label: 'Crooked Creek — Angle Job', badge: 'hard',
+    blurb: 'A stretch generator has to thread a narrow gap on an angle. Work the Swing controls to line it up before it touches down.',
+    genOff: 225, long: true, swing: true, target: 58, tol: 20, tolWide: 50,
+    greet: 'This one\'s a squeeze — long generator, and the drop zone\'s cattywampus to the fence. Use the Swing buttons to walk it in at an angle.',
+  },
+};
+
+/* ============================================================
+   SCENES
+   ============================================================ */
+const scenes = {};
+
+/* ---------- TITLE ---------- */
+scenes.title = {
+  enter() {
+    setPhase('Clock in to start your shift');
+    setLayout('full');
+    const ov = $('overlay'); ov.className = 'show';
+    ov.innerHTML = `
+      <div class="card">
+        <h1>Rollback Rodeo</h1>
+        <p>You're a Sunbelt driver with a rollback, a generator, and a <i>dream</i>.
+        Drop the generator at the jobsite, then head back to the branch. What could possibly go wrong?</p>
+        ${getBest() > 0 ? `<p>🏆 Best shift: <b>${getBest()} pts</b></p>` : ''}
+        <ul>
+          <li><b>Drive:</b> hold the <b>GAS</b> / <b>BRAKE</b> pedals with your thumbs (or ← → keys)</li>
+          <li><b>Unload:</b> follow the clipboard. It always shows your next step</li>
+          <li>Do it right = <span class="plus">+points</span>. Mess it up = <span class="minus">–points</span>.</li>
+          <li>Pick a job next — a straightforward drop, or a tricky angled one</li>
+        </ul>
+        <label for="nm">Driver name</label>
+        <input id="nm" maxlength="24" value="${(S.name || 'Not anyone from 788').replace(/"/g, '')}">
+        <button class="b go big" id="startBtn">Clock In 🕖</button>
+      </div>`;
+    $('startBtn').onclick = () => { newGame($('nm').value.trim()); go('mapselect'); };
+    $('nm').addEventListener('keydown', e => { if (e.key === 'Enter') $('startBtn').click(); });
+    say('Mornin\'. Coffee\'s hot, truck\'s loaded, and my vest is extra yellow today. Let\'s roll.', 'happy');
+  },
+  update() {},
+  render() {
+    drawSky(); drawBackdrop(time * 40); drawRoad(time * 40);
+    ctx.save(); ctx.translate(OX() + 60, 0);
+    drawBranch(560);
+    drawRollback(ctx, 250, GY, { gen: 'bed', chains: true, wheel: 0, beacon: true });
+    drawPerson(ctx, 800, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true }));
+    ctx.restore();
+  }
+};
+
+/* ---------- MAP SELECT ---------- */
+scenes.mapselect = {
+  enter() {
+    setPhase('Pick today\'s job');
+    setLayout('full');
+    const ov = $('overlay'); ov.className = 'show center';
+    const cards = Object.values(MAPS).map(m => `
+      <button class="mapcard" data-map="${m.id}">
+        <span class="badge ${m.badge}">${m.badge}</span>
+        <h3>${m.label}</h3>
+        <p>${m.blurb}</p>
+      </button>`).join('');
+    ov.innerHTML = `
+      <div class="card wide">
+        <h2>Pick Today's Job, ${S.name.replace(/</g, '&lt;')}</h2>
+        <p>Dispatch has two tickets on the board this morning.</p>
+        <div class="maps">${cards}</div>
+      </div>`;
+    ov.querySelectorAll('.mapcard').forEach(b => b.onclick = () => { sfx.click(); S.map = b.dataset.map; go('drive1'); });
+    say('Two tickets on the board. Your call, boss.', 'happy');
+  },
+  update() {},
+  render() {
+    drawSky(); drawBackdrop(time * 30); drawRoad(time * 30);
+    ctx.save(); ctx.translate(OX() + 60, 0);
+    drawBranch(560);
+    drawRollback(ctx, 250, GY, { gen: 'bed', chains: true, wheel: 0, beacon: true });
+    drawPerson(ctx, 800, GROUND + 50, .62, Object.assign({}, CAST.dispatch, { wave: true }));
+    ctx.restore();
+  }
+};
+
+/* ---------- DRIVE 1: branch → jobsite ---------- */
+scenes.drive1 = {
+  driving() { return this.w.mode === 'driving'; },
+  enter() {
+    setPhase('Part 1 of 3 · Deliver the generator to the jobsite');
+    const dest = 4200;
+    this.w = makeWorld({ start: 450, dest, destLabel: 'Jobsite', loaded: true,
+      sites: [{ kind: 'branch', x: 150 }, { kind: 'jobsite', x: dest - 120 }] });
+    this.w.events = [
+      hintAt(700, 'Stop sign up ahead. Hold BRAKE to stop before the white line.'),
+      stopSign(1250),
+      hintAt(1600, 'Road work ahead — speed limit 25. Easy on the gas, big fella.'),
+      workZone(2100, 3000, 35),
+      hintAt(3450, 'There\'s the jobsite! Stop with the front bumper in the green box.'),
+      parkZone(dest, 'jobsite', () => go('unload')),
+    ];
+    driveControls();
+    say((S.map === 'angle' ? 'Long generator\'s chained down and sticking out the back a bit. ' : 'Generator\'s chained down. ')
+      + 'Hold the green GAS pedal to go, red BRAKE to stop. Let\'s make some money.');
+  },
+  update(dt) { driveStep(this.w, dt); },
+  render() {
+    renderWorld(this.w);
+    if (this.w.x > 3700) drawPerson(ctx, this.w.dest - 20 - camOf(this.w), GROUND - 14, .45, Object.assign({}, CAST.foreman, { wave: true }));
+  }
+};
+
+/* ---------- UNLOAD ---------- */
+const X0 = 360;   // truck position in unload scene
+scenes.unload = {
+  enter() {
+    setPhase('Part 2 of 3 · Unload the generator with the rollback');
+    this.map = MAPS[S.map] || MAPS.flat;
+    this.u = { brake: false, chocks: false, pto: false, chains: true, tilt: 0, slide: 0, gen: 'bed', genPos: 0,
+               genX: 0, genTilted: false, cable: true, ws: 0, fastT: 0, cool: 0, winchFast: false, beepT: 0, signed: false,
+               swingX: 0 };
+    const u = this.u;
+    this.steps = [
+      { id: 'brake', label: 'Set the parking brake', pts: 10, chk: () => u.brake, msg: 'Parking brake set. Safety first, snacks second.' },
+      { id: 'chocks', label: 'Chock the wheels (bonus!)', bonus: true, pts: 5, chk: () => u.chocks, msg: 'Wheel chocks in. Somewhere, the safety manager just smiled and doesn\'t know why.' },
+      { id: 'pto', label: 'Engage the PTO (hydraulics)', pts: 10, chk: () => u.pto, msg: 'PTO engaged. The hydraulics are awake. Barely more awake than me.' },
+      { id: 'chains', label: 'Remove the tie-down chains', pts: 10, chk: () => !u.chains, msg: 'Chains off. The winch cable\'s got her now.' },
+      { id: 'tilt', label: 'Tilt the bed all the way up', pts: 10, chk: () => u.tilt >= 1, msg: 'Bed tilted. Look at that angle. Majestic.' },
+      { id: 'slide', label: 'Slide the bed back to the ground', pts: 10, chk: () => u.slide >= SLIDEMAX - .5, msg: 'Bed\'s kissing the dirt. BEEP BEEP BEEP — the sound of success.' },
+      { id: 'winch', label: 'Winch the generator off — TAP, don\'t hold!', pts: 0, chk: () => false },
+      { id: 'cable', label: 'Unhook the winch cable', pts: 10, chk: () => !u.cable, msg: 'Cable unhooked. The generator is free! Fly, little generator!' },
+      { id: 'fwd', label: 'Slide the bed forward', pts: 10, chk: () => u.gen === 'ground' && u.slide <= 0, msg: 'Bed slid home. Smooth.' },
+      { id: 'lower', label: 'Lower the bed flat', pts: 10, chk: () => u.gen === 'ground' && u.tilt <= 0, msg: 'Bed\'s down and flat. Like my jokes.' },
+      { id: 'ptooff', label: 'Turn the PTO off', pts: 10, chk: () => u.gen === 'ground' && u.tilt <= 0 && u.slide <= 0 && !u.pto, msg: 'PTO off. Hydraulics are taking a nap. Jealous.' },
+      { id: 'sign', label: 'Get the foreman\'s signature', pts: 0, chk: () => false },
+      { id: 'leave', label: 'Pull chocks + release brake, then head out', pts: 0, chk: () => false },
+    ];
+    this.done = {}; this.hintKey = null;
+    sceneMistakes = 0;
+    $('clip').className = 'show'; $('next').className = 'show';
+    this.renderControls();
+    say(this.map.greet);
+    later(4500, () => say('You\'re late. Put it by the fence. And don\'t scratch my porta-john.', 'mad', 'foreman'));
+  },
+  renderControls() {
+    const u = this.u, self = this;
+    const toggle = (label, key, fn) => tag(btn(`${label}<small>${u[key] ? 'ON' : 'OFF'}</small>`, fn, u[key] ? 'on' : ''), key);
+    const tag = (b, k) => { b.dataset.k = k; return b; };
+    const hyd = () => {
+      if (!u.brake) { award(-10, 'Whoa! The truck lurched forward — no parking brake! The foreman spilled his coffee on his clipboard.', 'shock'); shake = 12; return false; }
+      if (!u.pto) { award(-5, 'Nothing\'s happening... because the PTO is off. The levers are just decoration right now.', 'mad'); return false; }
+      return true;
+    };
+    setControls(
+      group('Truck',
+        toggle('🅿️ Brake', 'brake', () => { u.brake = !u.brake; self.renderControls(); }),
+        tag(btn(`🧱 Chocks<small>${u.chocks ? 'IN' : 'OUT'}</small>`, () => { u.chocks = !u.chocks; sfx.thud(); self.renderControls(); }, u.chocks ? 'on' : ''), 'chocks'),
+        toggle('⚙️ PTO', 'pto', () => { u.pto = !u.pto; if (u.pto) sfx.crank(); self.renderControls(); })),
+      group('Load',
+        tag(btn(u.chains ? '⛓️ Remove chains' : '⛓️ Chains off', () => {
+          if (!u.chains) return;
+          if (u.tilt > 0) { award(-5, 'Crawling up a tilted bed to undo chains? Nope. Chains come off while the bed is flat.', 'mad'); return; }
+          u.chains = false; sfx.click(); self.renderControls();
+        }, u.chains ? '' : 'on'), 'chains'),
+        tag(btn(u.cable ? '🪝 Unhook cable' : '🪝 Unhooked', () => {
+          if (!u.cable) return;
+          if (u.gen !== 'ground') { award(-5, 'NOT YET! That cable is the only thing keeping the generator from going on an adventure.', 'shock'); return; }
+          u.cable = false; self.renderControls();
+        }, u.cable ? '' : 'on'), 'cable')),
+      group('Bed · press & hold',
+        tag(holdBtn('▲ Tilt up', 'tiltUp', () => hyd()), 'tiltUp'),
+        tag(holdBtn('▼ Tilt down', 'tiltDown', () => {
+          if (!hyd()) return false;
+          if (u.slide > 0) { award(-5, 'Slide the bed forward BEFORE lowering it, or we\'re bending something expensive.', 'mad'); return false; }
+        }), 'tiltDown'),
+        tag(holdBtn('◀ Slide back', 'slideBack', () => {
+          if (!hyd()) return false;
+          if (u.tilt < .99) { award(-5, 'Tilt the bed up first, chief. Sliding it flat just grinds the frame.', 'mad'); return false; }
+        }), 'slideBack'),
+        tag(holdBtn('Slide fwd ▶', 'slideFwd', () => {
+          if (!hyd()) return false;
+          if (u.gen === 'ground' && u.cable) { award(-10, 'The cable\'s still hooked! I just dragged the generator a foot back toward the truck.', 'shock'); return false; }
+        }), 'slideFwd')),
+      group('Winch · tap, don\'t hold!',
+        tag(holdBtn('🔽 Winch out', 'winchOut', () => {
+          if (!hyd()) return false;
+          if (u.gen !== 'bed') { say('It\'s already off the truck, bud.', 'happy'); return false; }
+          if (u.chains) { award(-10, 'The chains are still on! The winch is groaning like my knees on a Monday.', 'mad'); return false; }
+        }), 'winchOut'),
+        tag(holdBtn('🔼 Winch in', 'winchIn', () => {
+          if (!hyd()) return false;
+          if (u.gen === 'ground' && u.cable) { award(-5, 'Whoa, I almost pulled the generator back on! Unhook the cable instead.', 'shock'); return false; }
+        }), 'winchIn')),
+      this.map.swing ? group('Swing · line up the angle',
+        tag(holdBtn('◀ Swing', 'swingL', () => {
+          if (u.gen !== 'bed') { say('Nothing left to swing, bud — it\'s already down.', 'happy'); return false; }
+          if (u.chains) { say('Can\'t swing it yet — it\'s still chained down.', 'mad'); return false; }
+        }), 'swingL'),
+        tag(holdBtn('Swing ▶', 'swingR', () => {
+          if (u.gen !== 'bed') { say('Nothing left to swing, bud — it\'s already down.', 'happy'); return false; }
+          if (u.chains) { say('Can\'t swing it yet — it\'s still chained down.', 'mad'); return false; }
+        }), 'swingR')) : null,
+      group('Paperwork',
+        tag(btn('✍️ Get signature', () => self.sign(), u.signed ? 'on' : ''), 'sign'),
+        tag(btn('🚚 Head out', () => self.leave(), 'go'), 'leave')),
+    );
+    this.renderClip();
+  },
+  renderClip() {
+    let nextFound = false;
+    const items = this.steps.map(s => {
+      const d = this.done[s.id];
+      let cls = d ? 'done' : '';
+      if (!d && !s.bonus && !nextFound) { cls += ' next'; nextFound = true; }
+      if (s.bonus) cls += ' bonus';
+      return `<li class="${cls}">${d ? '✔ ' : ''}${s.label}</li>`;
+    }).join('');
+    const open = $('clip').open;
+    $('clip').innerHTML = `<summary>📋 Full checklist</summary><ol>${items}</ol>`;
+    $('clip').open = open;
+    const req = this.steps.filter(s => !s.bonus), n = req.findIndex(s => !this.done[s.id]);
+    $('next').innerHTML = n < 0 ? '<b>Clipboard</b>All done! 🎉'
+      : `<b>📋 Next step · ${n + 1} of ${req.length}</b>${req[n].label}`;
+    // glow + scroll to the button that does the next step
+    const u = this.u, id = n < 0 ? null : req[n].id;
+    const key = { brake: 'brake', pto: 'pto', chains: 'chains', tilt: 'tiltUp', slide: 'slideBack', winch: 'winchOut',
+      cable: 'cable', fwd: 'slideFwd', lower: 'tiltDown', ptooff: 'pto', sign: 'sign',
+      leave: u.chocks ? 'chocks' : u.brake ? 'brake' : 'leave' }[id];
+    document.querySelectorAll('#controls .hint').forEach(b => b.classList.remove('hint'));
+    const hb = key && document.querySelector(`#controls [data-k="${key}"]`);
+    if (hb) {
+      hb.classList.add('hint');
+      if (this.hintKey !== key) { this.hintKey = key; hb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    }
+  },
+  complete(id, pts, msg) {
+    if (this.done[id]) return;
+    this.done[id] = true;
+    if (msg) award(pts, msg);
+    this.renderClip();
+  },
+  sign() {
+    const u = this.u;
+    if (u.signed) { say('Already got the signature. And the donut. The donut\'s gone.'); return; }
+    const miss = [];
+    if (u.gen !== 'ground') miss.push('the generator is still on your truck');
+    if (u.cable) miss.push('your cable is still hooked to it');
+    if (u.slide > 0 || u.tilt > 0) miss.push('that bed isn\'t stowed');
+    if (u.pto) miss.push('your PTO is still whining');
+    if (miss.length) { award(-3, `Not signin' anything. ${miss[0][0].toUpperCase() + miss[0].slice(1)}.`, 'mad', 'foreman'); return; }
+    u.signed = true; this.done.sign = true;
+    award(20, 'Looks good. Signed. Here\'s a donut for your trouble — don\'t tell the other drivers.', 'happy', 'foreman');
+    this.renderControls();
+  },
+  leave() {
+    const u = this.u;
+    if (!u.signed) { say('Can\'t leave without the foreman\'s signature. No signature, no paycheck.', 'mad'); return; }
+    let clean = true;
+    if (u.chocks) { clean = false; S.score -= 10; S.log.push({ pts: -10, msg: 'Ran over my own wheel chocks.' }); }
+    if (u.brake) { clean = false; S.score -= 10; S.log.push({ pts: -10, msg: 'Drove off with the parking brake on.' }); }
+    this.done.leave = true; this.renderClip();
+    if (!clean) sceneMistakes++;
+    if (clean) award(10, 'Chocks pulled, brake released. Clean getaway. Back to the branch!');
+    else {
+      updateHUD(); sfx.bad(); shake = 10;
+      popups.push({ text: u.chocks && u.brake ? '-20' : '-10', color: '#ff6b6b', t: 0 });
+      say(u.chocks ? '*CRUNCH* ...I ran over my own wheel chocks. They\'re wheel chips now.' + (u.brake ? ' AND the parking brake was on. Smells like money burning.' : '')
+                   : 'Smell that? I drove off with the parking brake on. That\'s the smell of money burning.', 'shock');
+    }
+    if (sceneMistakes === 0) later(clean ? 200 : 1400, () => award(15, 'Flawless unload! Not one mistake all shift — the foreman\'s already telling people about you.'));
+    clearControls();
+    later(2600, () => go('drive2'));
+  },
+  update(dt) {
+    const u = this.u;
+    if (held.tiltUp) u.tilt = Math.min(1, u.tilt + .45 * dt);
+    if (held.tiltDown) u.tilt = Math.max(0, u.tilt - .45 * dt);
+    if (held.slideBack) u.slide = Math.min(SLIDEMAX, u.slide + 55 * dt);
+    if (held.slideFwd) u.slide = Math.max(0, u.slide - 55 * dt);
+    if ((held.slideBack && u.slide < SLIDEMAX) || (held.slideFwd && u.slide > 0)) {
+      u.beepT -= dt; if (u.beepT <= 0) { sfx.beep(); u.beepT = .6; }
+    }
+    if (this.map.swing && u.gen === 'bed') {
+      if (held.swingL) u.swingX = clamp(u.swingX - 70 * dt, -100, 100);
+      if (held.swingR) u.swingX = clamp(u.swingX + 70 * dt, -100, 100);
+    }
+    // winch
+    if (held.winchOut && u.gen === 'bed') u.ws = Math.min(130, u.ws + 50 * dt);
+    else if (held.winchIn && u.gen === 'bed') { u.genPos = Math.max(0, u.genPos - 30 * dt); u.ws = 0; }
+    else u.ws = Math.max(0, u.ws - 220 * dt);
+    u.cool -= dt;
+    if (u.gen === 'bed' && u.ws > 0) {
+      u.genPos += u.ws * dt;
+      if (u.ws > 85) {
+        u.fastT += dt;
+        if (u.fastT > .35 && u.cool <= 0) {
+          u.fastT = 0; u.cool = 2; u.winchFast = true;
+          award(-5, 'Easy on the winch, Speed Racer! Tap it — don\'t hold it!', 'shock');
+        }
+      } else u.fastT = 0;
+      if (u.genPos >= this.map.genOff) {
+        const [rx] = bedToWorld(X0, GY, u, FRONT0 - u.slide - BEDLEN, 0);
+        u.gen = 'ground'; u.ws = 0; held.winchOut = false;
+        const dropOk = u.slide >= SLIDEMAX - .5 && u.tilt >= .99;
+        u.genX = (dropOk ? rx - 44 : rx - 60) + u.swingX;
+        let pts, msg, mood;
+        if (dropOk) {
+          pts = u.winchFast ? 10 : 20;
+          msg = u.winchFast ? 'Generator\'s on the ground. A little fast, but nobody died.' : 'Generator\'s on the ground — smooth as butter on a biscuit!';
+          sfx.thud(); puff(u.genX, GY - 5, '#b8956a', 8, 3);
+        } else {
+          u.genTilted = true; pts = -25; mood = 'shock';
+          msg = 'The generator took the express route off the end of the bed! It survived... mostly. The foreman is crying.';
+          sfx.thud(); shake = 18; puff(u.genX, GY - 5, '#b8956a', 16, 4);
+        }
+        if (this.map.swing) {
+          const off = Math.abs(u.swingX - this.map.target);
+          if (off <= this.map.tol) { pts += 25; msg += ' And you threaded the angle dead center — textbook!'; }
+          else if (off <= this.map.tolWide) { pts += 5; msg += ' A little crooked lining up the angle, but it counts.'; }
+          else { pts -= 20; u.genTilted = true; mood = 'shock'; msg += ' Clipped the fence post lining up that angle. Oof.'; shake = Math.max(shake, 14); }
+        }
+        this.done.winch = true;
+        award(pts, msg, mood);
+        this.renderClip();
+        this.renderControls();
+      }
+    }
+    // auto-complete steps
+    this.steps.forEach(s => { if (!this.done[s.id] && s.chk()) this.complete(s.id, s.pts, s.msg); });
+  },
+  render() {
+    const u = this.u;
+    drawSky(); drawBackdrop(3000);
+    ctx.fillStyle = '#b9955f'; ctx.fillRect(0, GROUND - 24, W, H);
+    ctx.save(); ctx.translate(OX(), 0);
+    drawJobsite(470);
+    ctx.fillStyle = '#a8864f'; ctx.fillRect(-OX(), GROUND + 2, W, H);
+    for (let i = 0; i < 40; i++) { ctx.fillStyle = '#967545'; ctx.fillRect((i * 97) % W - OX(), GROUND + 20 + (i * 37) % 70, 14, 4); }
+    if (this.map.swing) {
+      const [tgtX] = bedToWorld(X0, GY, { tilt: 1, slide: SLIDEMAX }, FRONT0 - SLIDEMAX - BEDLEN, 0);
+      this.dropCenterX = tgtX - 44 + this.map.target;
+      ctx.save(); ctx.translate(this.dropCenterX, GY); ctx.rotate(-0.22);
+      ctx.strokeStyle = '#46e06a'; ctx.lineWidth = 3; ctx.setLineDash([8, 5]); ctx.strokeRect(-55, -6, 110, 50); ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(70,224,106,.15)'; ctx.fillRect(-55, -6, 110, 50);
+      ctx.restore();
+      drawPole(this.dropCenterX + this.map.tolWide + 26, GY);
+      drawPole(this.dropCenterX - this.map.tolWide - 26, GY);
+    }
+    drawRollback(ctx, X0, GY, Object.assign({}, u, { beacon: u.pto, wheel: 0, genLong: this.map.long }));
+    if (u.chocks) { ctx.fillStyle = '#f5d90a'; [X0 + 44, X0 + 250].forEach(x => { ctx.beginPath(); ctx.moveTo(x, GY); ctx.lineTo(x + 12, GY - 12); ctx.lineTo(x + 12, GY); ctx.fill(); }); }
+    drawPerson(ctx, 770, GROUND + 50, .6, Object.assign({}, CAST.driver, { mood: S.mood }));
+    drawPerson(ctx, 890, GROUND + 40, .55, Object.assign({}, CAST.foreman, { mood: this.u.genTilted ? 'shock' : 'happy', flip: true }));
+    drawParticles(0);
+    // winch speed gauge
+    if (u.gen === 'bed' && !u.chains) {
+      const gx = 180, gy = 150, gw = 370;
+      ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, gx, gy, gw + 40, 78, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('WINCH SPEED · stay out of the red', gx + 20, gy + 30);
+      ctx.fillStyle = '#333'; ctx.fillRect(gx + 20, gy + 42, gw, 22);
+      ctx.fillStyle = '#3c9d4f'; ctx.fillRect(gx + 20, gy + 42, gw * 85 / 130, 22);
+      ctx.fillStyle = '#c94440'; ctx.fillRect(gx + 20 + gw * 85 / 130, gy + 42, gw * 45 / 130, 22);
+      ctx.fillStyle = '#fff'; ctx.fillRect(gx + 20 + gw * u.ws / 130 - 3, gy + 36, 6, 34);
+    }
+    // swing gauge — shows how close the generator is to the angled drop zone
+    if (this.map.swing && u.gen === 'bed' && !u.chains) {
+      const gx = 180, gy = 240, gw = 370, lo = -100, hi = 100;
+      const px = v => gx + 20 + gw * (clamp(v, lo, hi) - lo) / (hi - lo);
+      ctx.fillStyle = 'rgba(0,0,0,.7)'; rr(ctx, gx, gy, gw + 40, 78, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('SWING · line up the angled drop zone', gx + 20, gy + 30);
+      ctx.fillStyle = '#c94440'; ctx.fillRect(gx + 20, gy + 42, gw, 22);
+      const t = this.map.target;
+      ctx.fillStyle = '#e0a53a'; ctx.fillRect(px(t - this.map.tolWide), gy + 42, px(t + this.map.tolWide) - px(t - this.map.tolWide), 22);
+      ctx.fillStyle = '#3c9d4f'; ctx.fillRect(px(t - this.map.tol), gy + 42, px(t + this.map.tol) - px(t - this.map.tol), 22);
+      ctx.fillStyle = '#fff'; ctx.fillRect(px(u.swingX) - 3, gy + 36, 6, 34);
+    }
+    ctx.restore();
+  }
+};
+
+/* ---------- DRIVE 2: jobsite → branch (with breakdown) ---------- */
+const PROBLEMS = {
+  belt:    { name: 'serpentine belt', fix: 'belt', key: 'hood',
+             clues: { dash: 'Battery light is on and the temp gauge is creeping up. Hmm.', hood: 'FOUND IT. The serpentine belt is lying in there like a dead snake.' } },
+  coolant: { name: 'coolant', fix: 'coolant', key: 'hood',
+             clues: { dash: 'Temp gauge is pegged on HOT. There\'s steam coming out of the grille.', hood: 'Coolant reservoir is bone dry. Somebody skipped the pre-trip... (it was me).' } },
+  battery: { name: 'battery terminal', fix: 'wrench', key: 'battery',
+             clues: { dash: 'Dash lights flicker... then everything goes dark. Spooky.', battery: 'FOUND IT. The battery terminal is loose — wiggling like a baby tooth.' } },
+  fuel:    { name: 'empty fuel tank', fix: 'diesel', key: 'tank',
+             clues: { dash: 'Fuel gauge says E. As in "Earl, you forgot to fuel up."', tank: 'I knocked on the fuel tank. It echoed. That is NOT a good sound.' } },
+  def:     { name: 'DEF tank', fix: 'def', key: 'tank',
+             clues: { dash: '"DEF LOW — ENGINE DERATE." The truck put itself in timeout.', tank: 'Diesel\'s full, but the little blue-cap DEF tank is empty. Found it!' } },
+};
+const DEFAULT_CLUES = {
+  dash: 'Check engine light is on. Thanks, truck. Super helpful.',
+  hood: 'Engine looks... like an engine. Belts on, coolant full. Nothing obvious.',
+  battery: 'Battery cables are tight and clean. Not the problem.',
+  tank: 'Diesel\'s got plenty, DEF\'s full. Tanks are fine.',
+  tires: 'Tires look great. Better than my sunburn, anyway.',
+};
+const TOOLS = [
+  ['belt', '🐍 Spare belt'], ['coolant', '🧴 Coolant jug'], ['wrench', '🔧 Wrench'], ['diesel', '⛽ Diesel can'],
+  ['def', '🔵 DEF jug'], ['gas', '⛽ GASOLINE can'], ['tape', '🩹 Duct tape'], ['zip', '🪢 Zip ties'], ['hammer', '🔨 Hammer'],
+];
+const WRONG = {
+  gas: 'I just put GASOLINE in a DIESEL truck. The mechanics at the branch are going to tell this story at my funeral.',
+  tape: 'Duct tape fixes everything... except, apparently, this.',
+  zip: 'I zip-tied something. It\'s very organized now. Still broken.',
+  hammer: 'Percussive maintenance! It went "bonk." Still broken.',
+};
+scenes.drive2 = {
+  driving() { return this.w.mode === 'driving'; },
+  enter() {
+    setPhase('Part 3 of 3 · Head back to the branch');
+    const dest = 4400;
+    this.w = makeWorld({ start: 450, dest, destLabel: 'Branch', loaded: false, leftGen: 330,
+      sites: [{ kind: 'jobsite', x: 330 }, { kind: 'branch', x: dest - 60 }] });
+    this.w.events = [
+      hintAt(900, 'Is that... an armadillo in the road? Hold BRAKE and let the little guy cross!', 'shock'),
+      armadillo(1450),
+      this.breakdown(2400),
+      hintAt(3700, 'Branch dead ahead. Park in the green box and we\'re done!'),
+      parkZone(dest, 'branch', () => go('end')),
+    ];
+    this.fix = null;
+    driveControls();
+    say('Generator delivered, donut acquired. Let\'s head back to the branch. Nothing can stop us now!');
+  },
+  breakdown(x) {
+    const self = this;
+    return {
+      hit: false,
+      update(w) {
+        if (this.hit || w.x < x) return;
+        this.hit = true; w.sputter = true; sfx.crank(); shake = 10;
+        say('Uh oh... *clunk* *wheeeeze*... that noise ain\'t good. Coast her onto the shoulder...', 'shock');
+        const wait = () => {
+          if (w.v > 0) { later(200, wait); return; }
+          w.mode = 'broken'; self.brokenPanel();
+        };
+        later(200, wait);
+      }
+    };
+  },
+  brokenPanel() {
+    const w = this.w, self = this;
+    w.driverOut = true;
+    setPhase('Part 3 of 3 · BROKEN DOWN on the side of the road');
+    say('Well, she\'s dead. Safety first — then decide: fix it myself, or call a tow?', 'mad');
+    const panel = () => setControls(
+      group('Safety first',
+        btn(w.hazards ? '⚠️ Hazards: ON' : '⚠️ Hazard lights', () => {
+          if (w.hazards) return; w.hazards = true; award(10, 'Hazards on. Now everybody can see my shame... safely.'); panel();
+        }, w.hazards ? 'on' : ''),
+        btn(w.triangles ? '🔺 Triangles out' : '🔺 Set out triangles', () => {
+          if (w.triangles) return; w.triangles = true; award(10, 'Warning triangles set out behind the truck. Textbook.'); panel();
+        }, w.triangles ? 'on' : ''),
+        btn('🦶 Kick the tire', () => { sfx.thud(); award(-2, 'OW. My toe. The truck felt nothing.', 'mad'); })),
+      group('Now what?',
+        btn('🔧 Try to fix it', () => self.decide('fix'), 'go'),
+        btn('📞 Call a tow truck', () => self.decide('tow'), 'go')));
+    panel();
+  },
+  decide(choice) {
+    const w = this.w;
+    if (!w.hazards) { w.hazards = true; award(-10, 'No hazards on?! Cars are flying by at 70. Hazards on NOW.', 'shock'); }
+    else if (!w.triangles) { award(-5, 'Forgot the triangles. A semi just blew my hat half off.', 'shock'); }
+    clearControls();
+    if (choice === 'tow') { later(1600, () => go('tow')); return; }
+    const keys = Object.keys(PROBLEMS);
+    this.fix = { prob: PROBLEMS[keys[Math.floor(Math.random() * keys.length)]], diagnosed: false, tries: 3, used: {} };
+    later(1400, () => this.fixPanel(true));
+  },
+  fixPanel(first) {
+    const f = this.fix, self = this;
+    if (first) say('Alright, let\'s play mechanic. Inspect stuff to find the problem, then grab the right thing from the toolbox.');
+    const inspect = (k, label) => btn(label, () => {
+      const clue = f.prob.clues[k] || DEFAULT_CLUES[k];
+      if (k === f.prob.key && !f.diagnosed) { f.diagnosed = true; award(5, clue + ' (+ diagnosis bonus)'); }
+      else say(clue, k === f.prob.key ? 'happy' : 'mad');
+    });
+    const tools = TOOLS.map(([id, label]) => {
+      const b = btn(label, () => self.useTool(id), f.used[id] ? 'warn' : '');
+      if (f.used[id]) b.disabled = true;
+      return b;
+    });
+    setControls(
+      group('Inspect', inspect('dash', '📟 Dashboard'), inspect('hood', '🔩 Under the hood'), inspect('battery', '🔋 Battery box'),
+            inspect('tank', '🛢️ Fuel/DEF tanks'), inspect('tires', '🛞 Tires')),
+      group(`Toolbox · ${f.tries} ${f.tries === 1 ? 'try' : 'tries'} left`, ...tools),
+      group('Give up?', btn('📞 Call a tow instead', () => { clearControls(); say('Alright, alright. Calling it in.', 'mad'); later(1200, () => go('tow')); }))
+    );
+  },
+  useTool(id) {
+    const f = this.fix, w = this.w;
+    if (id === f.prob.fix) {
+      const pts = 30 + (f.diagnosed ? 10 : 0);
+      award(pts, `Fixed the ${f.prob.name}! ${f.diagnosed ? 'Diagnosed it AND fixed it. ' : 'Lucky guess! '}Who needs a mechanic? (Me. Usually me.)`);
+      sfx.vroom();
+      clearControls();
+      later(2400, () => {
+        w.sputter = false; w.hazards = false; w.triangles = false; w.driverOut = false; w.mode = 'driving';
+        setPhase('Part 3 of 3 · Head back to the branch');
+        say('She fired right up! Triangles packed, hazards off. Back to the branch — hold GAS!');
+        driveControls();
+      });
+      return;
+    }
+    f.used[id] = true; f.tries--;
+    if (id === 'gas') {
+      award(-20, WRONG.gas, 'shock');
+      clearControls();
+      later(2800, () => { say('Yeah... she\'s not starting again. Calling a tow.', 'mad'); later(1800, () => go('tow')); });
+      return;
+    }
+    const lbl = TOOLS.find(t => t[0] === id)[1].replace(/^\S+\s/, '');
+    award(-10, WRONG[id] || `Tried the ${lbl.toLowerCase()}. Wasn't the problem. The truck remains unimpressed.`, 'mad');
+    if (f.tries <= 0) {
+      clearControls();
+      later(2400, () => { say('Out of ideas. This truck is held together by duct tape and shame. Calling a tow.', 'mad'); later(2000, () => go('tow')); });
+      return;
+    }
+    this.fixPanel(false);
+  },
+  update(dt) { driveStep(this.w, dt); if (this.w.sputter && this.w.mode !== 'driving' && Math.random() < .25) puff(this.w.x - 10, GROUND - 90, '#666'); },
+  render() { renderWorld(this.w); }
+};
+
+/* ---------- TOW ---------- */
+scenes.tow = {
+  enter() {
+    const w = this.w = scenes.drive2.w;
+    w.mode = 'towing'; this.phase = 'call';
+    setPhase('Part 3 of 3 · Waiting on a tow');
+    setLayout('full');
+    sfx.ring();
+    clearControls();
+    say('Dispatch, go ahead.', 'happy', 'dispatch');
+    later(1600, () => award(-10, 'We\'ll send the heavy rollback. ETA 45 minutes. And yes — we\'re putting this in the newsletter.', 'happy', 'dispatch'));
+    later(4200, () => {
+      say('45 minutes on the side of the road. What\'s the move?', 'happy');
+      const pick = (pts, msg, mood) => () => {
+        clearControls();
+        award(pts, msg, mood);
+        later(2800, () => this.arrive());
+      };
+      setControls(group('While you wait...',
+        btn('📝 Fill out the breakdown report', pick(10, 'Report filled out. Paperwork: the unsung hero of trucking.')),
+        btn('🦺 Wait behind the guardrail', pick(10, 'Standing safe behind the guardrail, away from traffic. Like a pro.')),
+        btn('🌯 Eat a gas-station burrito', pick(0, 'Delicious. Regrettable. Mostly delicious.')),
+        btn('🤳 Selfie with the dead truck', pick(-5, 'Posted it to the group chat. 47 laughing emojis. The branch manager "liked" it. Uh oh.', 'shock'))));
+    });
+  },
+  arrive() {
+    setLayout('full');
+    fadeText = '45 minutes later...';
+    this.phase = 'fadeout';
+    later(2600, () => {
+      const w = this.w;
+      w.hideTruck = true; w.triangles = false; w.hazards = false; w.driverOut = false;
+      w.rig = { x: w.x + 90, wheel: 0 }; w.towGuy = true;
+      this.phase = 'fadein';
+      say('A rollback... riding on a rollback. ROLLBACK-CEPTION. Hop in, I\'ll take you home.', 'happy', 'tow');
+      later(4200, () => { w.towGuy = false; this.phase = 'drive'; say('Riding shotgun in the tow truck. Not how I pictured this ride home, but hey — AC works.'); });
+    });
+  },
+  update(dt) {
+    const w = this.w;
+    if (this.phase === 'fadeout') fade = Math.min(1, fade + dt * 1.2);
+    if (this.phase === 'fadein') { fade = Math.max(0, fade - dt * 1.2); if (fade === 0) fadeText = ''; }
+    if (this.phase === 'drive' && w.rig) {
+      w.rig.x += 220 * dt; w.rig.wheel += 220 * dt / 26; w.x = w.rig.x - 90; w.v = 220;
+      if (w.rig.x >= w.dest + 60) {
+        w.rig.x = w.dest + 60; w.v = 0; this.phase = 'done';
+        say('Home sweet branch. I\'ll drop her at the shop. Try not to break anything else today, yeah?', 'happy', 'tow');
+        later(3200, () => go('end'));
+      }
+    }
+    if (this.phase === 'call' && Math.random() < .2) puff(w.x - 10, GROUND - 90, '#666');
+  },
+  render() { renderWorld(this.w, { noHud: this.phase !== 'drive' }); }
+};
+
+/* ---------- END ---------- */
+function rank(s) {
+  if (s >= 220) return ['🏆 Branch Legend', 'They\'re naming a generator after you.'];
+  if (s >= 150) return ['🤘 Rollback Rockstar', 'The branch manager bought you lunch. The GOOD tacos.'];
+  if (s >= 80)  return ['👍 Solid Driver', 'The branch manager nodded at you. That\'s basically a hug.'];
+  if (s >= 0)   return ['😬 Probationary Rookie', 'Maybe stick to washing the trucks for a week.'];
+  return ['💀 Legend (Negative)', 'Your photo is now on the breakroom "Don\'t Be This Guy" board.'];
+}
+scenes.end = {
+  enter() {
+    setPhase('Shift complete!');
+    setLayout('full');
+    const [r, sub] = rank(S.score);
+    const best = getBest(), isNew = S.score > best;
+    if (isNew) setBest(S.score);
+    const log = S.log.filter(l => l.pts !== 0).map(l =>
+      `<li><span class="p ${l.pts > 0 ? 'plus' : 'minus'}">${l.pts > 0 ? '+' : ''}${l.pts}</span><span>${l.msg.replace(/</g, '&lt;')}</span></li>`).join('');
+    const ov = $('overlay'); ov.className = 'show center';
+    ov.innerHTML = `
+      <div class="card">
+        <h2>Shift Complete, ${S.name.replace(/</g, '&lt;')}!</h2>
+        <div class="final">${S.score} pts</div>
+        <div class="rank">${r}</div>
+        ${isNew ? '<p style="color:#f5d90a;font-weight:800">🏆 New personal best!</p>' : `<p style="color:var(--muted)">Best shift: ${Math.max(best, S.score)} pts</p>`}
+        <p>${sub}</p>
+        <ul class="log">${log}</ul>
+        <button class="b go big" id="again">Clock In Again 🔁</button>
+      </div>`;
+    $('again').onclick = () => go('title');
+    say(S.score >= 150 ? 'Another day, another generator. Clocking out — tacos are calling my name.' :
+        'Well... we survived. Mostly. Clocking out before anything else breaks.', S.score >= 80 ? 'happy' : 'mad');
+    fade = 0; fadeText = '';
+    if (S.score >= 220) { confetti(50); later(900, () => confetti(30)); }
+  },
+  update() {},
+  render() {
+    drawSky(); drawBackdrop(1000); drawRoad(1000);
+    ctx.save(); ctx.translate(OX(), 0);
+    drawBranch(480);
+    drawRollback(ctx, 60, GY, { gen: 'none', wheel: 0 });
+    drawPerson(ctx, 480, GROUND + 50, .62, Object.assign({}, CAST.driver, { wave: true, mood: S.score >= 80 ? 'happy' : 'shock' }));
+    ctx.restore();
+    drawParticles(0);
+  }
+};
+
+/* ============================================================
+   MAIN LOOP
+   ============================================================ */
+let last = performance.now();
+function frame(t) {
+  const dt = Math.min(.05, (t - last) / 1000); last = t; time += dt;
+  if (scene) scene.update(dt);
+  updateParticles(dt);
+  shake = Math.max(0, shake - dt * 30);
+  ctx.setTransform(K, 0, 0, K, 0, 0);
+  ctx.save();
+  ctx.translate(0, H - 540);   // extra height becomes sky above the scene
+  if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+  if (scene) scene.render();
+  ctx.restore();
+  drawPopups();
+  drawFade();
+  requestAnimationFrame(frame);
+}
+addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe($('stage'));
+resize();
+newGame('Not anyone from 788');
+go('title');
+requestAnimationFrame(frame);
+window.__rr = { get S() { return S; }, get scene() { return scene; }, get particles() { return particles; }, go, held, input };
+</script>
+</body>
+</html>
